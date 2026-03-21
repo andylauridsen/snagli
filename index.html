@@ -61,8 +61,11 @@
     #topbar {
       position: absolute; top: 0; left: 0; right: 0; z-index: 100;
       display: flex; align-items: center; gap: 10px;
-      padding: 12px 16px 8px;
-      background: linear-gradient(to bottom, rgba(248,247,255,0.98) 70%, transparent);
+      padding: 12px 16px 10px;
+      background: rgba(255,255,255,0.97);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 2px 20px rgba(26,26,46,0.10);
     }
     #logo {
       font-size: 22px; font-weight: 900; color: var(--brand);
@@ -96,9 +99,9 @@
 
     /* ── Live Ticker ────────────────────────────────────── */
     #ticker {
-      position: absolute; bottom: 90px; left: 0; right: 0; z-index: 100;
+      position: absolute; bottom: 80px; left: 0; right: 0; z-index: 100;
       overflow: hidden; height: 36px;
-      background: rgba(255,255,255,0.92);
+      background: rgba(255,255,255,0.95);
       border-top: 1px solid var(--border);
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center;
@@ -122,33 +125,41 @@
     /* ── Bottom Nav ─────────────────────────────────────── */
     #bottomnav {
       position: absolute; bottom: 0; left: 0; right: 0; z-index: 100;
-      height: 84px; background: var(--surface);
+      height: 80px; background: var(--surface);
       border-top: 1px solid var(--border);
+      box-shadow: 0 -4px 24px rgba(26,26,46,0.10);
       display: flex; align-items: center; justify-content: space-around;
-      padding: 0 8px 16px;
+      padding: 0 8px 12px;
     }
     .nav-btn {
       display: flex; flex-direction: column; align-items: center; gap: 3px;
       background: none; border: none; cursor: pointer;
       font-family: var(--font); font-size: 10px; font-weight: 700;
-      color: var(--muted); padding: 6px 12px; border-radius: var(--radius-sm);
+      color: var(--muted); padding: 6px 16px; border-radius: var(--radius-sm);
       transition: all 0.15s;
     }
-    .nav-btn .icon { font-size: 20px; line-height: 1; }
+    .nav-btn .icon { font-size: 22px; line-height: 1; }
     .nav-btn.active { color: var(--brand); }
     .nav-btn:active { transform: scale(0.93); }
 
-    /* ADD button - center */
+    /* ADD button - center, overlaps map */
     #add-btn {
-      width: 56px; height: 56px; border-radius: 50%;
-      background: var(--brand); border: none;
+      width: 68px; height: 68px; border-radius: 50%;
+      background: var(--brand); border: 4px solid white;
       display: flex; align-items: center; justify-content: center;
-      cursor: pointer; box-shadow: 0 4px 20px rgba(255,77,109,0.45);
-      transition: all 0.15s; margin-bottom: 8px;
-      font-size: 28px; color: white; font-weight: 300;
+      cursor: pointer;
+      box-shadow: 0 4px 24px rgba(255,77,109,0.5), 0 0 0 1px rgba(255,77,109,0.15);
+      transition: all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+      margin-bottom: 28px; /* lifts it above the nav bar */
+      font-size: 34px; line-height: 1; color: white; font-weight: 900;
+      flex-shrink: 0;
     }
-    #add-btn:active { transform: scale(0.92); box-shadow: 0 2px 10px rgba(255,77,109,0.3); }
-    #add-btn.guest { background: var(--muted); box-shadow: none; }
+    #add-btn:hover { transform: scale(1.07); box-shadow: 0 8px 32px rgba(255,77,109,0.6); }
+    #add-btn:active { transform: scale(0.93); box-shadow: 0 2px 12px rgba(255,77,109,0.3); }
+    #add-btn.guest {
+      background: var(--muted);
+      box-shadow: 0 4px 16px rgba(144,144,176,0.3);
+    }
 
     /* ── Modals / Sheets ────────────────────────────────── */
     .overlay {
@@ -788,16 +799,34 @@ function initMap() {
   map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/light-v11',
-    center: [-87.6298, 41.8781], // Chicago default
+    center: [-87.6298, 41.8781], // Chicago fallback
     zoom: 11,
     attributionControl: false
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right');
-  map.addControl(new mapboxgl.GeolocateControl({
+
+  const geolocate = new mapboxgl.GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
     trackUserLocation: false,
     showUserHeading: false
-  }), 'bottom-right');
+  });
+  map.addControl(geolocate, 'bottom-right');
+
+  // Auto-trigger geolocation once map loads
+  map.on('load', () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          map.flyTo({
+            center: [pos.coords.longitude, pos.coords.latitude],
+            zoom: 12,
+            duration: 1200
+          });
+        },
+        () => { /* permission denied — stay on Chicago fallback */ }
+      );
+    }
+  });
 }
 
 // ── Auth ─────────────────────────────────────────────────
@@ -960,6 +989,7 @@ async function loadItems() {
       color: d.color || '#FF4D6D', hot: d.hot || false
     }));
   }
+  // DEFAULT_ITEMS already set as fallback if DB returns nothing
 }
 
 // ── Pins ──────────────────────────────────────────────────
@@ -983,22 +1013,22 @@ function addPinMarker(pin) {
   const health = pin.health_tier ?? 3;
   if (health === 0) return;
 
-  const opacity = health === 3 ? 1 : health === 2 ? 0.75 : 0.5;
-  const size = health === 3 ? 44 : health === 2 ? 40 : 36;
+  const opacity = health === 3 ? 1 : health === 2 ? 0.8 : 0.55;
+  const size = health === 3 ? 56 : health === 2 ? 50 : 44;
 
   const el = document.createElement('div');
   el.style.cssText = `
     width:${size}px; height:${size}px; border-radius:50%;
     background:${item.color}; border: 3px solid white;
     display:flex; align-items:center; justify-content:center;
-    font-size:${size * 0.45}px; cursor:pointer;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    font-size:${Math.round(size * 0.46)}px; cursor:pointer;
+    box-shadow: 0 3px 16px rgba(0,0,0,0.25);
     opacity:${opacity};
-    transition: transform 0.15s;
+    transition: transform 0.15s, box-shadow 0.15s;
   `;
   el.textContent = item.emoji;
-  el.onmouseenter = () => el.style.transform = 'scale(1.15)';
-  el.onmouseleave = () => el.style.transform = 'scale(1)';
+  el.onmouseenter = () => { el.style.transform = 'scale(1.18)'; el.style.boxShadow = '0 6px 24px rgba(0,0,0,0.3)'; };
+  el.onmouseleave = () => { el.style.transform = 'scale(1)'; el.style.boxShadow = '0 3px 16px rgba(0,0,0,0.25)'; };
 
   const popup = new mapboxgl.Popup({ offset: 8, closeButton: false })
     .setHTML(buildPopupHTML(pin, item));
@@ -1310,9 +1340,16 @@ async function loadProfileStats() {
 
 // ── Views ─────────────────────────────────────────────────
 function showView(v) {
-  if (v === 'activity') openOverlay('activity-overlay');
+  if (v === 'map') {
+    closeOverlay('activity-overlay');
+    closeOverlay('profile-overlay');
+  }
+  if (v === 'activity') {
+    openOverlay('activity-overlay');
+  }
   if (v === 'profile') {
     if (!currentUser) { openAuth(); return; }
+    loadProfileStats();
     openOverlay('profile-overlay');
   }
 }
