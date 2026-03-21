@@ -93,9 +93,22 @@
       flex-shrink: 0; padding: 7px 14px; border-radius: 20px;
       background: var(--brand); color: white; border: none;
       font-family: var(--font); font-size: 12px; font-weight: 800;
-      cursor: pointer; transition: background 0.15s;
+      cursor: pointer; transition: all 0.15s;
     }
     #auth-btn:hover { background: var(--brand-dark); }
+    #auth-btn.logged-in {
+      background: var(--bg); color: var(--dark);
+      border: 2px solid var(--border);
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 10px 5px 5px;
+    }
+    #auth-btn.logged-in:hover { border-color: var(--brand); color: var(--brand); }
+    .avatar-circle {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--brand); color: white;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 900; flex-shrink: 0;
+    }
 
     /* ── Live Ticker ────────────────────────────────────── */
     #ticker {
@@ -447,9 +460,10 @@
 
     /* ── Version Tag ────────────────────────────────────── */
     #version-tag {
-      position: fixed; bottom: 88px; right: 8px; z-index: 99;
-      font-family: var(--mono); font-size: 9px; color: var(--muted);
-      opacity: 0.5; pointer-events: none; letter-spacing: 0.5px;
+      position: fixed; bottom: 86px; left: 8px; z-index: 101;
+      font-family: var(--mono); font-size: 9px; color: var(--dark);
+      opacity: 0.35; pointer-events: none; letter-spacing: 0.5px;
+      background: rgba(255,255,255,0.8); padding: 2px 5px; border-radius: 4px;
     }
 
     /* ── Loading ────────────────────────────────────────── */
@@ -576,6 +590,7 @@
       <div class="field"><label>Password</label><input type="password" id="reg-pass" placeholder="at least 8 characters" /></div>
       <div class="field"><label>Display Name <span style="font-weight:400;text-transform:none;font-size:11px">(optional, shown to friends later)</span></label><input type="text" id="reg-display" placeholder="What friends call you" /></div>
       <button class="btn-primary" onclick="doRegister()" id="reg-btn">Create Account</button>
+      <button class="btn-primary" id="reg-goto-login" onclick="switchAuth('login')" style="display:none;margin-top:8px;background:var(--dark)">→ Go to Login</button>
       <div class="form-toggle">Already have an account? <a onclick="switchAuth('login')">Log in</a></div>
     </div>
 
@@ -730,7 +745,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.1.5</div>
+<div id="version-tag">v0.1.6</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -860,16 +875,18 @@ function updateAuthUI() {
   const addBtn = document.getElementById('add-btn');
   const adminBtn = document.getElementById('admin-nav-btn');
   if (currentUser) {
-    btn.textContent = currentProfile?.public_username || '👤';
-    btn.onclick = () => openOverlay('profile-overlay');
+    const username = currentProfile?.public_username || '?';
+    const initial = username.charAt(0).toUpperCase();
+    btn.className = 'logged-in';
+    btn.innerHTML = `<div class="avatar-circle">${initial}</div><span>${username}</span>`;
+    btn.onclick = () => { loadProfileStats(); openOverlay('profile-overlay'); };
     addBtn.classList.remove('guest');
-    document.getElementById('profile-name').textContent = currentProfile?.display_name || currentProfile?.public_username || 'Your Profile';
-    document.getElementById('profile-username').textContent = '@' + (currentProfile?.public_username || '');
-    if (currentProfile?.is_admin) {
-      adminBtn.style.display = 'flex';
-    }
+    document.getElementById('profile-name').textContent = currentProfile?.display_name || username;
+    document.getElementById('profile-username').textContent = '@' + username;
+    if (currentProfile?.is_admin) adminBtn.style.display = 'flex';
   } else {
-    btn.textContent = 'Join';
+    btn.className = '';
+    btn.innerHTML = 'Join';
     btn.onclick = openAuth;
     addBtn.classList.add('guest');
     adminBtn.style.display = 'none';
@@ -882,6 +899,9 @@ function switchAuth(view) {
   ['login','register','forgot'].forEach(v => {
     document.getElementById('auth-' + v).style.display = v === view ? 'block' : 'none';
   });
+  // Reset post-registration button when navigating away
+  const gotoBtn = document.getElementById('reg-goto-login');
+  if (gotoBtn && view !== 'register') gotoBtn.style.display = 'none';
 }
 
 async function doLogin() {
@@ -959,6 +979,8 @@ async function doRegister() {
   suc.textContent = '✅ Account created! Check your email to confirm, then log in.';
   suc.style.display = 'block';
   btn.disabled = false; btn.textContent = 'Create Account';
+  // Show a login redirect button
+  document.getElementById('reg-goto-login').style.display = 'block';
 }
 
 async function doForgot() {
