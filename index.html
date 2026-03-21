@@ -80,9 +80,9 @@
     }
     #filters::-webkit-scrollbar { display: none; }
     .chip {
-      flex-shrink: 0; padding: 5px 12px; border-radius: 20px;
+      flex-shrink: 0; padding: 7px 14px; border-radius: 20px;
       border: 2px solid var(--border); background: var(--surface);
-      font-family: var(--font); font-size: 12px; font-weight: 700;
+      font-family: var(--font); font-size: 13px; font-weight: 700;
       cursor: pointer; transition: all 0.15s; white-space: nowrap;
       color: var(--mid);
     }
@@ -122,8 +122,11 @@
     #ticker-inner {
       display: flex; gap: 48px; align-items: center;
       white-space: nowrap;
-      animation: ticker-scroll 30s linear infinite;
+      animation: ticker-scroll 60s linear infinite;
+      cursor: grab;
+      user-select: none;
     }
+    #ticker-inner.dragging { animation-play-state: paused; cursor: grabbing; }
     #ticker-inner:hover { animation-play-state: paused; }
     .tick-item {
       font-size: 12px; font-weight: 600; color: var(--mid);
@@ -466,13 +469,19 @@
       background: rgba(255,255,255,0.8); padding: 2px 5px; border-radius: 4px;
     }
 
+    /* ── Period Accent ──────────────────────────────────── */
+    .period-accent { color: var(--accent); }
+    #logo .period-accent { color: var(--accent); }
+
     /* ── Loading ────────────────────────────────────────── */
     #loading {
       position: fixed; inset: 0; z-index: 500;
       background: var(--surface); display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 16px;
+      transition: opacity 0.8s ease;
     }
-    #loading .logo-big { font-size: 48px; font-weight: 900; color: var(--brand); }
+    #loading.fade-out { opacity: 0; pointer-events: none; }
+    #loading .logo-big { font-size: 52px; font-weight: 900; color: var(--brand); }
     #loading .logo-big span { color: var(--dark); }
     #loading .load-sub { font-size: 14px; color: var(--muted); font-weight: 600; }
     .spinner {
@@ -511,7 +520,7 @@
 
 <!-- Loading Screen -->
 <div id="loading">
-  <div class="logo-big">snagli<span>.</span></div>
+  <div class="logo-big">snagli<span class="period-accent">.</span></div>
   <div class="spinner"></div>
   <div class="load-sub">Loading the map…</div>
 </div>
@@ -521,7 +530,7 @@
 
   <!-- Top Bar -->
   <div id="topbar">
-    <div id="logo">snagli<span>.</span></div>
+    <div id="logo">snagli<span class="period-accent">.</span></div>
     <div id="filters">
       <button class="chip active" data-item="all">🗺️ All</button>
     </div>
@@ -546,9 +555,6 @@
 
   <!-- Bottom Nav -->
   <div id="bottomnav">
-    <button class="nav-btn active" onclick="showView('map')">
-      <span class="icon">🗺️</span>Map
-    </button>
     <button class="nav-btn" onclick="showView('activity')">
       <span class="icon">⚡</span>Activity
     </button>
@@ -754,7 +760,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.1.7</div>
+<div id="version-tag">v0.1.9</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -806,7 +812,13 @@ async function boot() {
   await loadPins();
   buildFilters();
   startTicker();
-  document.getElementById('loading').style.display = 'none';
+
+  // Show loading screen for at least 1.5s so the logo is visible, then fade
+  setTimeout(() => {
+    const loading = document.getElementById('loading');
+    loading.classList.add('fade-out');
+    setTimeout(() => loading.style.display = 'none', 800);
+  }, 1500);
 
   sb.auth.onAuthStateChange(async (event, session) => {
     if (event === 'SIGNED_IN') {
@@ -832,41 +844,33 @@ function initMap() {
   mapboxgl.accessToken = MAPBOX_TOKEN;
   map = new mapboxgl.Map({
     container: 'map',
-    style: 'mapbox://styles/mapbox/light-v11',
-    center: [-83.1498, 42.6584], // Rochester Hills — only shown briefly before geolocation fires
-    zoom: 3, // Start zoomed out so the default center isn't misleading
+    style: 'mapbox://styles/mapbox/streets-v12',
+    center: [-83.1498, 42.6584],
+    zoom: 3,
     attributionControl: false
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right');
 
+  // User location dot — shows the blue pulsing dot on the map
   const geolocate = new mapboxgl.GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
-    trackUserLocation: false,
-    showUserHeading: false
+    trackUserLocation: true,
+    showUserHeading: false,
+    showAccuracyCircle: false
   });
   map.addControl(geolocate, 'bottom-right');
 
   // Auto-geolocate as soon as map is ready — this is the primary center
   map.on('load', () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        pos => {
-          map.flyTo({
-            center: [pos.coords.longitude, pos.coords.latitude],
-            zoom: 12,
-            duration: 1400,
-            essential: true
-          });
-        },
-        () => {
-          // Permission denied — fly to Rochester Hills as a sensible fallback
-          map.flyTo({ center: [-83.1498, 42.6584], zoom: 11, duration: 800 });
-        },
-        { timeout: 6000 }
-      );
-    } else {
-      map.flyTo({ center: [-83.1498, 42.6584], zoom: 11, duration: 800 });
-    }
+    // Trigger geolocate — shows blue user dot and flies to location
+    geolocate.trigger();
+
+    // Fallback if geolocation denied after 6s
+    setTimeout(() => {
+      if (map.getZoom() < 8) {
+        map.flyTo({ center: [-83.1498, 42.6584], zoom: 11, duration: 800 });
+      }
+    }, 6000);
 
     // Tap a store/POI on the map to start adding a pin there
     map.on('click', async (e) => {
@@ -1091,22 +1095,35 @@ function addPinMarker(pin) {
   const opacity = health === 3 ? 1 : health === 2 ? 0.8 : 0.55;
   const size = health === 3 ? 56 : health === 2 ? 50 : 44;
 
+  // Wrapper div anchors the marker — inner div does the hover animation
+  // This prevents Mapbox from losing the anchor point on hover
   const el = document.createElement('div');
-  el.style.cssText = `
-    width:${size}px; height:${size}px; border-radius:50%;
+  el.style.cssText = `width:${size}px; height:${size}px; cursor:pointer;`;
+
+  const inner = document.createElement('div');
+  inner.style.cssText = `
+    width:100%; height:100%; border-radius:50%;
     background:${item.color}; border: 3px solid white;
     display:flex; align-items:center; justify-content:center;
-    font-size:${Math.round(size * 0.46)}px; cursor:pointer;
+    font-size:${Math.round(size * 0.46)}px;
     box-shadow: 0 3px 16px rgba(0,0,0,0.25);
     opacity:${opacity};
     transition: transform 0.15s, box-shadow 0.15s;
   `;
-  el.textContent = item.emoji;
-  el.onmouseenter = () => { el.style.transform = 'scale(1.18)'; el.style.boxShadow = '0 6px 24px rgba(0,0,0,0.3)'; };
-  el.onmouseleave = () => { el.style.transform = 'scale(1)'; el.style.boxShadow = '0 3px 16px rgba(0,0,0,0.25)'; };
+  inner.textContent = item.emoji;
+  inner.onmouseenter = () => { inner.style.transform = 'scale(1.18)'; inner.style.boxShadow = '0 6px 24px rgba(0,0,0,0.3)'; };
+  inner.onmouseleave = () => { inner.style.transform = 'scale(1)'; inner.style.boxShadow = '0 3px 16px rgba(0,0,0,0.25)'; };
+  el.appendChild(inner);
 
   const popup = new mapboxgl.Popup({ offset: 8, closeButton: false })
     .setHTML(buildPopupHTML(pin, item));
+
+  // Close all other popups when this one opens
+  popup.on('open', () => {
+    Object.entries(markers).forEach(([id, m]) => {
+      if (id !== pin.id) m.getPopup()?.remove();
+    });
+  });
 
   const marker = new mapboxgl.Marker(el)
     .setLngLat([pin.longitude, pin.latitude])
@@ -1442,6 +1459,19 @@ function updateActivityList(pins) {
       return `<span class="tick-item"><span class="dot"></span>${item.emoji} ${item.name} spotted at ${p.store_name}${cityState ? ' · ' + cityState : ''} · ${timeAgo(p.created_at)}</span>`;
     }).join('');
     inner.innerHTML = items_html + items_html;
+
+    // Touch/mouse drag to scrub through ticker
+    const tickerEl = document.getElementById('ticker');
+    let dragging = false, dragStartX = 0, dragScrollLeft = 0;
+    const onDragStart = (x) => { dragging = true; dragStartX = x; dragScrollLeft = tickerEl.scrollLeft; inner.classList.add('dragging'); };
+    const onDragMove = (x) => { if (!dragging) return; tickerEl.scrollLeft = dragScrollLeft - (x - dragStartX); };
+    const onDragEnd = () => { dragging = false; inner.classList.remove('dragging'); };
+    inner.addEventListener('touchstart', e => onDragStart(e.touches[0].pageX), { passive: true });
+    inner.addEventListener('touchmove',  e => onDragMove(e.touches[0].pageX),  { passive: true });
+    inner.addEventListener('touchend',   () => onDragEnd());
+    inner.addEventListener('mousedown',  e => onDragStart(e.pageX));
+    window.addEventListener('mousemove', e => onDragMove(e.pageX));
+    window.addEventListener('mouseup',   () => onDragEnd());
   }
 
   // Activity sheet
@@ -1493,8 +1523,9 @@ function extractCityState(address) {
 // Fly to a pin on the map and open its popup
 function flyToPin(lat, lng, pinId) {
   closeOverlay('activity-overlay');
+  // Close all open popups first
+  Object.values(markers).forEach(m => m.getPopup()?.remove());
   map.flyTo({ center: [lng, lat], zoom: 15, duration: 1000 });
-  // Open popup after fly completes
   setTimeout(() => {
     const marker = markers[pinId];
     if (marker) marker.togglePopup();
