@@ -70,8 +70,28 @@
     #logo {
       font-size: 22px; font-weight: 900; color: var(--brand);
       letter-spacing: -0.5px; flex-shrink: 0;
+      display: flex; align-items: baseline; gap: 1px;
     }
     #logo span { color: var(--dark); }
+    .logo-dot {
+      display: inline-block;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--accent);
+      margin-left: 1px; margin-bottom: 1px;
+      animation: dot-bounce 2.4s ease-in-out infinite;
+      flex-shrink: 0;
+      box-shadow: 0 2px 6px rgba(255,209,102,0.5);
+    }
+    @keyframes dot-bounce {
+      0%, 100% { transform: translateY(0) scale(1); }
+      40%       { transform: translateY(-4px) scale(1.1); }
+      60%       { transform: translateY(-2px) scale(1.05); }
+    }
+    /* Loading screen version — bigger */
+    .logo-big .logo-dot {
+      width: 14px; height: 14px;
+      margin-left: 2px; margin-bottom: 2px;
+    }
 
     /* Filter chips */
     #filters {
@@ -469,10 +489,6 @@
       background: rgba(255,255,255,0.8); padding: 2px 5px; border-radius: 4px;
     }
 
-    /* ── Period Accent ──────────────────────────────────── */
-    .period-accent { color: var(--accent); }
-    #logo .period-accent { color: var(--accent); }
-
     /* ── Loading ────────────────────────────────────────── */
     #loading {
       position: fixed; inset: 0; z-index: 500;
@@ -520,7 +536,7 @@
 
 <!-- Loading Screen -->
 <div id="loading">
-  <div class="logo-big">snagli<span class="period-accent">.</span></div>
+  <div class="logo-big">snagli<span class="logo-dot"></span></div>
   <div class="spinner"></div>
   <div class="load-sub">Loading the map…</div>
 </div>
@@ -530,7 +546,7 @@
 
   <!-- Top Bar -->
   <div id="topbar">
-    <div id="logo">snagli<span class="period-accent">.</span></div>
+    <div id="logo">snagli<span class="logo-dot"></span></div>
     <div id="filters">
       <button class="chip active" data-item="all">🗺️ All</button>
     </div>
@@ -760,7 +776,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.2.0</div>
+<div id="version-tag">v0.2.1</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -854,7 +870,8 @@ function initMap() {
   // User location dot — shows the blue pulsing dot on the map
   const geolocate = new mapboxgl.GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
-    trackUserLocation: true,
+    trackUserLocation: false,
+    showUserLocation: true,
     showUserHeading: false,
     showAccuracyCircle: false
   });
@@ -879,12 +896,7 @@ function initMap() {
       }
     }, 6000);
 
-    // Tap anywhere on the map to start a pin
-    // First tries to find a named POI at the tap point
-    // Falls back to reverse geocoding the coordinates
     map.on('click', async (e) => {
-      if (!currentUser) return;
-
       // Check for any named place across all label layers
       const POI_LAYERS = [
         'poi-label', 'transit-label', 'airport-label',
@@ -897,14 +909,21 @@ function initMap() {
         ? map.queryRenderedFeatures(e.point, { layers: POI_LAYERS })
         : [];
 
+      // Only proceed if we actually tapped a named POI
+      if (!features.length) return;
+
+      const f = features[0];
+      const poiName = f.properties.name || f.properties.name_en;
+      if (!poiName) return;
+
+      // Guest — show join prompt with store context
+      if (!currentUser) {
+        showToast(`Join Snagli to report ${poiName}! 🎯`);
+        setTimeout(() => openAuth(), 800);
+        return;
+      }
+
       const { lng, lat } = e.lngLat;
-
-      // Get the best name from POI features
-      const poiName = features.length
-        ? (features[0].properties.name || features[0].properties.name_en)
-        : null;
-
-      // Always reverse geocode to get a real address
       try {
         const res = await fetch(
           `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json` +
@@ -916,8 +935,7 @@ function initMap() {
         const address = best?.place_name || '';
         startPinFromMap(name, address, lat, lng);
       } catch {
-        const name = poiName || 'This location';
-        startPinFromMap(name, '', lat, lng);
+        startPinFromMap(poiName, '', lat, lng);
       }
     });
 
