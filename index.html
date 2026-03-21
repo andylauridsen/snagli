@@ -617,36 +617,45 @@
       <div class="step-dot" id="dot-2"></div>
     </div>
 
-    <!-- Step 0: Store -->
+    <!-- Step 0: What did you find? -->
     <div id="pin-step-0">
+      <div class="sheet-title">What did you find? 🎉</div>
+      <div class="sheet-sub">Pick the item you spotted.</div>
+      <div class="item-grid" id="item-picker-grid"></div>
+      <button class="btn-primary" onclick="pinNextStep(1)" id="step0-next" disabled>Next →</button>
+    </div>
+
+    <!-- Step 1: Where? -->
+    <div id="pin-step-1" style="display:none">
       <div class="sheet-title">Where'd you find it? 📍</div>
-      <div class="sheet-sub">Search for the store or tap on the map.</div>
+      <div class="sheet-sub">Search the store name and pick your location.</div>
       <div id="store-search-wrap">
         <span id="store-search-icon">🔍</span>
-        <input type="text" id="store-search" placeholder="Search Target, GameStop…" oninput="searchStores(this.value)" />
+        <input type="text" id="store-search" placeholder="e.g. Target Rochester Hills…" oninput="searchStores(this.value)" autocomplete="off" />
       </div>
       <div id="store-results"></div>
       <div id="selected-store">
         <div class="store-name" id="sel-store-name"></div>
         <div class="store-addr" id="sel-store-addr"></div>
+        <button style="background:none;border:none;color:var(--brand);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;padding:4px 0;margin-top:4px" onclick="clearSelectedStore()">✕ Change store</button>
       </div>
-      <button class="btn-primary" onclick="pinNextStep(1)" id="step0-next" disabled>Next →</button>
-    </div>
-
-    <!-- Step 1: Item -->
-    <div id="pin-step-1" style="display:none">
-      <div class="sheet-title">What did you find? 🎉</div>
-      <div class="sheet-sub">Pick the item you spotted.</div>
-      <div class="item-grid" id="item-picker-grid"></div>
       <button class="btn-primary" onclick="pinNextStep(2)" id="step1-next" disabled>Next →</button>
       <button class="btn-ghost" onclick="pinNextStep(0)">← Back</button>
     </div>
 
-    <!-- Step 2: Status + Qty -->
+    <!-- Step 2: How's the stock? -->
     <div id="pin-step-2" style="display:none">
       <div class="sheet-title">How's the stock? 📦</div>
       <div class="sheet-sub">Help your crew know what to expect.</div>
-      <div class="status-grid" id="status-grid">
+      <!-- Summary of selections -->
+      <div id="pin-summary" style="display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:16px">
+        <div id="pin-summary-emoji" style="font-size:24px"></div>
+        <div>
+          <div id="pin-summary-item" style="font-weight:800;font-size:13px;color:var(--dark)"></div>
+          <div id="pin-summary-store" style="font-size:12px;color:var(--muted)"></div>
+        </div>
+      </div>
+      <div class="status-grid">
         <button class="status-btn" data-status="in_stock" onclick="selectStatus(this)"><span class="status-emoji">✅</span>In Stock</button>
         <button class="status-btn" data-status="limited" onclick="selectStatus(this)"><span class="status-emoji">📦</span>Limited</button>
         <button class="status-btn" data-status="saw_it" onclick="selectStatus(this)"><span class="status-emoji">👀</span>Saw It</button>
@@ -745,7 +754,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.1.6</div>
+<div id="version-tag">v0.1.7</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -858,6 +867,28 @@ function initMap() {
     } else {
       map.flyTo({ center: [-83.1498, 42.6584], zoom: 11, duration: 800 });
     }
+
+    // Tap a store/POI on the map to start adding a pin there
+    map.on('click', async (e) => {
+      if (!currentUser) return;
+      const features = map.queryRenderedFeatures(e.point, { layers: ['poi-label','transit-label'] });
+      if (!features.length) return;
+      const f = features[0];
+      const name = f.properties.name || f.properties.name_en;
+      if (!name) return;
+      const { lng, lat } = e.lngLat;
+      try {
+        const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?types=address&access_token=${MAPBOX_TOKEN}`);
+        const data = await res.json();
+        const address = data.features?.[0]?.place_name || '';
+        startPinFromMap(name, address, lat, lng);
+      } catch {
+        startPinFromMap(name, '', lat, lng);
+      }
+    });
+
+    map.on('mouseenter', 'poi-label', () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'poi-label', () => { map.getCanvas().style.cursor = ''; });
   });
 }
 
@@ -1169,7 +1200,8 @@ function handleAddPin() {
 
 function resetPinState() {
   pinState = { step: 0, store: null, item: null, status: null, qty: null };
-  document.getElementById('store-search').value = '';
+  const search = document.getElementById('store-search');
+  if (search) search.value = '';
   document.getElementById('store-results').style.display = 'none';
   document.getElementById('selected-store').style.display = 'none';
   document.getElementById('step0-next').disabled = true;
@@ -1181,6 +1213,21 @@ function resetPinState() {
   pinNextStep(0);
 }
 
+// Called when user taps a POI or store on the map
+function startPinFromMap(storeName, storeAddress, lat, lng) {
+  if (!currentUser) { openAuth(); return; }
+  resetPinState();
+  // Pre-fill the store
+  pinState.store = { name: storeName, address: storeAddress, lat, lng };
+  document.getElementById('sel-store-name').textContent = storeName;
+  document.getElementById('sel-store-addr').textContent = storeAddress;
+  document.getElementById('selected-store').style.display = 'block';
+  document.getElementById('step1-next').disabled = false;
+  openOverlay('pin-overlay');
+  // Skip straight to item selection since store is pre-filled
+  pinNextStep(0);
+}
+
 function pinNextStep(step) {
   [0,1,2].forEach(i => {
     document.getElementById(`pin-step-${i}`).style.display = i === step ? 'block' : 'none';
@@ -1188,6 +1235,21 @@ function pinNextStep(step) {
     dot.className = 'step-dot' + (i < step ? ' done' : i === step ? ' active' : '');
   });
   pinState.step = step;
+  // Update summary card when reaching step 2
+  if (step === 2) updatePinSummary();
+}
+
+function updatePinSummary() {
+  const item = ITEMS.find(i => i.id === pinState.item);
+  if (item) {
+    document.getElementById('pin-summary-emoji').textContent = item.emoji;
+    document.getElementById('pin-summary-item').textContent = item.name;
+  }
+  if (pinState.store) {
+    const cityState = extractCityState(pinState.store.address);
+    document.getElementById('pin-summary-store').textContent =
+      pinState.store.name + (cityState ? ' · ' + cityState : '');
+  }
 }
 
 function buildItemGrid() {
@@ -1205,7 +1267,15 @@ function selectItem(el, id) {
   document.querySelectorAll('.item-card').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
   pinState.item = id;
-  document.getElementById('step1-next').disabled = false;
+  document.getElementById('step0-next').disabled = false;
+}
+
+function clearSelectedStore() {
+  pinState.store = null;
+  document.getElementById('store-search').value = '';
+  document.getElementById('selected-store').style.display = 'none';
+  document.getElementById('step1-next').disabled = true;
+  document.getElementById('store-search').focus();
 }
 
 function selectStatus(el) {
@@ -1384,6 +1454,7 @@ function updateActivityList(pins) {
     const item = ITEMS.find(i => i.id === p.item_id) || { emoji: '📍', name: 'Find' };
     const cityState = extractCityState(p.store_address);
     const healthColor = p.health_tier === 3 ? 'var(--accent2)' : p.health_tier === 2 ? 'var(--accent)' : 'var(--muted)';
+    const username = p.profiles?.public_username ? '@' + p.profiles.public_username : '👤 Spotter';
     return `<div onclick="flyToPin(${p.latitude},${p.longitude},'${p.id}')"
       style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.1s;border-radius:8px;margin:0 -4px;padding-left:4px;padding-right:4px"
       onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='transparent'">
@@ -1393,7 +1464,7 @@ function updateActivityList(pins) {
       <div style="flex:1;min-width:0">
         <div style="font-weight:800;font-size:14px;color:var(--dark)">${item.name}</div>
         <div style="font-size:13px;color:var(--mid);font-weight:600">${p.store_name}${cityState ? ' <span style="color:var(--muted);font-weight:400">· ' + cityState + '</span>' : ''}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">${STATUS_LABELS[p.status] || ''} · ${timeAgo(p.created_at)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${STATUS_LABELS[p.status] || ''} · ${timeAgo(p.created_at)} · <span style="color:var(--brand);font-weight:700">${username}</span></div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
         <div style="width:8px;height:8px;border-radius:50%;background:${healthColor}"></div>
