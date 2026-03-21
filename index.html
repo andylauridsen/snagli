@@ -445,6 +445,13 @@
     .stat-card .stat-num { font-size: 28px; font-weight: 900; color: var(--brand); }
     .stat-card .stat-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
 
+    /* ── Version Tag ────────────────────────────────────── */
+    #version-tag {
+      position: fixed; bottom: 88px; right: 8px; z-index: 99;
+      font-family: var(--mono); font-size: 9px; color: var(--muted);
+      opacity: 0.5; pointer-events: none; letter-spacing: 0.5px;
+    }
+
     /* ── Loading ────────────────────────────────────────── */
     #loading {
       position: fixed; inset: 0; z-index: 500;
@@ -722,6 +729,9 @@
   </div>
 </div>
 
+<!-- Version tag -->
+<div id="version-tag">v0.1.4</div>
+
 <!-- Toast -->
 <div id="toast"></div>
 
@@ -735,7 +745,7 @@ const MAPBOX_TOKEN = 'pk.eyJ1IjoiYW5keWxhdXJpZHNlbiIsImEiOiJjbW4wbHFsbWgwbDFqMnd
 const { createClient } = supabase;
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-let map, currentUser, currentProfile, markers = {}, activeFilter = 'all';
+let map, currentUser, currentProfile, markers = {}, activeFilters = new Set(['all']);
 let pinState = { step: 0, store: null, item: null, status: null, qty: null };
 let storeSearchTimer = null;
 
@@ -799,8 +809,8 @@ function initMap() {
   map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/light-v11',
-    center: [-87.6298, 41.8781], // Chicago fallback
-    zoom: 11,
+    center: [-83.1498, 42.6584], // Rochester Hills — only shown briefly before geolocation fires
+    zoom: 3, // Start zoomed out so the default center isn't misleading
     attributionControl: false
   });
   map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right');
@@ -812,7 +822,7 @@ function initMap() {
   });
   map.addControl(geolocate, 'bottom-right');
 
-  // Auto-trigger geolocation once map loads
+  // Auto-geolocate as soon as map is ready — this is the primary center
   map.on('load', () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -820,11 +830,18 @@ function initMap() {
           map.flyTo({
             center: [pos.coords.longitude, pos.coords.latitude],
             zoom: 12,
-            duration: 1200
+            duration: 1400,
+            essential: true
           });
         },
-        () => { /* permission denied — stay on Chicago fallback */ }
+        () => {
+          // Permission denied — fly to Rochester Hills as a sensible fallback
+          map.flyTo({ center: [-83.1498, 42.6584], zoom: 11, duration: 800 });
+        },
+        { timeout: 6000 }
       );
+    } else {
+      map.flyTo({ center: [-83.1498, 42.6584], zoom: 11, duration: 800 });
     }
   });
 }
@@ -996,7 +1013,12 @@ async function loadItems() {
 async function loadPins() {
   const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
   let query = sb.from('pins').select(`*, profiles(public_username)`).eq('removed', false).gte('last_activity', cutoff);
-  if (activeFilter !== 'all') query = query.eq('item_id', activeFilter);
+
+  // Multi-filter: if not 'all' and specific items selected, filter by those
+  if (!activeFilters.has('all') && activeFilters.size > 0) {
+    query = query.in('item_id', [...activeFilters]);
+  }
+
   const { data } = await query.order('created_at', { ascending: false });
   clearMarkers();
   if (data) data.forEach(addPinMarker);
@@ -1281,15 +1303,31 @@ function buildShareText(pin, item) {
 // ── Filters ───────────────────────────────────────────────
 function buildFilters() {
   const bar = document.getElementById('filters');
-  bar.innerHTML = `<button class="chip ${activeFilter === 'all' ? 'active' : ''}" data-item="all" onclick="setFilter('all')">🗺️ All</button>`;
+  bar.innerHTML = `<button class="chip active" data-item="all" onclick="toggleFilter('all')">🗺️ All</button>`;
   ITEMS.forEach(item => {
-    bar.innerHTML += `<button class="chip ${activeFilter === item.id ? 'active' : ''}" data-item="${item.id}" onclick="setFilter('${item.id}')">${item.emoji} ${item.name}</button>`;
+    bar.innerHTML += `<button class="chip" data-item="${item.id}" onclick="toggleFilter('${item.id}')">${item.emoji} ${item.name}${item.hot ? ' 🔥' : ''}</button>`;
   });
 }
 
-function setFilter(id) {
-  activeFilter = id;
-  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.item === id));
+function toggleFilter(id) {
+  if (id === 'all') {
+    // All resets everything
+    activeFilters = new Set(['all']);
+  } else {
+    // Remove 'all' when a specific item is picked
+    activeFilters.delete('all');
+    if (activeFilters.has(id)) {
+      activeFilters.delete(id);
+      // If nothing left, revert to all
+      if (activeFilters.size === 0) activeFilters.add('all');
+    } else {
+      activeFilters.add(id);
+    }
+  }
+  // Update chip UI
+  document.querySelectorAll('.chip').forEach(c => {
+    c.classList.toggle('active', activeFilters.has(c.dataset.item));
+  });
   loadPins();
 }
 
