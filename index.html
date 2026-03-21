@@ -1,0 +1,1461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Snagli — Find It First</title>
+  <meta name="description" content="Snagli is the real-time map where kids find trending collectibles before they're gone." />
+  <meta property="og:title" content="Snagli — Find It First" />
+  <meta property="og:description" content="Drop a pin. Tell your crew. Find Pokémon cards, Needos, squishies and more before they're gone." />
+  <meta property="og:url" content="https://snagli.com" />
+  <meta property="og:type" content="website" />
+  <meta name="apple-mobile-web-app-title" content="Snagli" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="theme-color" content="#ffffff" />
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+  <!-- Mapbox -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    /* ── Reset & Variables ──────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --brand: #FF4D6D;
+      --brand-dark: #E63558;
+      --brand-light: #FFE0E6;
+      --accent: #FFD166;
+      --accent2: #06D6A0;
+      --dark: #1a1a2e;
+      --mid: #4a4a6a;
+      --muted: #9090b0;
+      --bg: #f8f7ff;
+      --surface: #ffffff;
+      --border: #e8e8f0;
+      --shadow: 0 4px 24px rgba(26,26,46,0.10);
+      --shadow-lg: 0 8px 40px rgba(26,26,46,0.16);
+      --radius: 16px;
+      --radius-sm: 10px;
+      --font: 'Nunito', sans-serif;
+      --mono: 'Space Mono', monospace;
+    }
+
+    html, body { height: 100%; overflow: hidden; font-family: var(--font); background: var(--bg); color: var(--dark); }
+
+    /* ── App Shell ──────────────────────────────────────── */
+    #app { height: 100dvh; display: flex; flex-direction: column; position: relative; }
+    #map { flex: 1; width: 100%; }
+
+    /* ── Top Bar ────────────────────────────────────────── */
+    #topbar {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px 8px;
+      background: linear-gradient(to bottom, rgba(248,247,255,0.98) 70%, transparent);
+    }
+    #logo {
+      font-size: 22px; font-weight: 900; color: var(--brand);
+      letter-spacing: -0.5px; flex-shrink: 0;
+    }
+    #logo span { color: var(--dark); }
+
+    /* Filter chips */
+    #filters {
+      display: flex; gap: 6px; overflow-x: auto; flex: 1;
+      scrollbar-width: none; -ms-overflow-style: none;
+    }
+    #filters::-webkit-scrollbar { display: none; }
+    .chip {
+      flex-shrink: 0; padding: 5px 12px; border-radius: 20px;
+      border: 2px solid var(--border); background: var(--surface);
+      font-family: var(--font); font-size: 12px; font-weight: 700;
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
+      color: var(--mid);
+    }
+    .chip.active { border-color: var(--brand); background: var(--brand-light); color: var(--brand); }
+    .chip:active { transform: scale(0.96); }
+
+    #auth-btn {
+      flex-shrink: 0; padding: 7px 14px; border-radius: 20px;
+      background: var(--brand); color: white; border: none;
+      font-family: var(--font); font-size: 12px; font-weight: 800;
+      cursor: pointer; transition: background 0.15s;
+    }
+    #auth-btn:hover { background: var(--brand-dark); }
+
+    /* ── Live Ticker ────────────────────────────────────── */
+    #ticker {
+      position: absolute; bottom: 90px; left: 0; right: 0; z-index: 100;
+      overflow: hidden; height: 36px;
+      background: rgba(255,255,255,0.92);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+    }
+    #ticker-inner {
+      display: flex; gap: 48px; align-items: center;
+      white-space: nowrap;
+      animation: ticker-scroll 30s linear infinite;
+    }
+    #ticker-inner:hover { animation-play-state: paused; }
+    .tick-item {
+      font-size: 12px; font-weight: 600; color: var(--mid);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .tick-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent2); flex-shrink: 0; }
+    @keyframes ticker-scroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    /* ── Bottom Nav ─────────────────────────────────────── */
+    #bottomnav {
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 100;
+      height: 84px; background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-around;
+      padding: 0 8px 16px;
+    }
+    .nav-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      background: none; border: none; cursor: pointer;
+      font-family: var(--font); font-size: 10px; font-weight: 700;
+      color: var(--muted); padding: 6px 12px; border-radius: var(--radius-sm);
+      transition: all 0.15s;
+    }
+    .nav-btn .icon { font-size: 20px; line-height: 1; }
+    .nav-btn.active { color: var(--brand); }
+    .nav-btn:active { transform: scale(0.93); }
+
+    /* ADD button - center */
+    #add-btn {
+      width: 56px; height: 56px; border-radius: 50%;
+      background: var(--brand); border: none;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; box-shadow: 0 4px 20px rgba(255,77,109,0.45);
+      transition: all 0.15s; margin-bottom: 8px;
+      font-size: 28px; color: white; font-weight: 300;
+    }
+    #add-btn:active { transform: scale(0.92); box-shadow: 0 2px 10px rgba(255,77,109,0.3); }
+    #add-btn.guest { background: var(--muted); box-shadow: none; }
+
+    /* ── Modals / Sheets ────────────────────────────────── */
+    .overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(26,26,46,0.5);
+      display: flex; align-items: flex-end;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .overlay.open { opacity: 1; pointer-events: all; }
+
+    .sheet {
+      width: 100%; background: var(--surface);
+      border-radius: 24px 24px 0 0;
+      padding: 20px 20px 40px;
+      transform: translateY(100%);
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      max-height: 92dvh; overflow-y: auto;
+    }
+    .overlay.open .sheet { transform: translateY(0); }
+
+    .sheet-handle {
+      width: 40px; height: 4px; border-radius: 2px;
+      background: var(--border); margin: 0 auto 20px;
+    }
+    .sheet-title {
+      font-size: 20px; font-weight: 900; color: var(--dark);
+      margin-bottom: 4px;
+    }
+    .sheet-sub {
+      font-size: 13px; color: var(--muted); margin-bottom: 20px;
+    }
+
+    /* ── Form Elements ──────────────────────────────────── */
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block; font-size: 12px; font-weight: 800;
+      color: var(--mid); text-transform: uppercase;
+      letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    .field input {
+      width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
+      border: 2px solid var(--border); font-family: var(--font);
+      font-size: 15px; color: var(--dark); background: var(--bg);
+      transition: border-color 0.15s; outline: none;
+    }
+    .field input:focus { border-color: var(--brand); }
+
+    .btn-primary {
+      width: 100%; padding: 14px; border-radius: var(--radius-sm);
+      background: var(--brand); color: white; border: none;
+      font-family: var(--font); font-size: 16px; font-weight: 800;
+      cursor: pointer; transition: all 0.15s; margin-top: 4px;
+    }
+    .btn-primary:hover { background: var(--brand-dark); }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled { background: var(--muted); cursor: not-allowed; }
+
+    .btn-ghost {
+      width: 100%; padding: 12px; border-radius: var(--radius-sm);
+      background: transparent; color: var(--mid); border: 2px solid var(--border);
+      font-family: var(--font); font-size: 14px; font-weight: 700;
+      cursor: pointer; transition: all 0.15s; margin-top: 8px;
+    }
+    .btn-ghost:hover { border-color: var(--mid); }
+
+    .form-toggle {
+      text-align: center; margin-top: 16px;
+      font-size: 13px; color: var(--muted);
+    }
+    .form-toggle a { color: var(--brand); font-weight: 700; cursor: pointer; text-decoration: none; }
+
+    .error-msg {
+      background: #fff0f3; border: 1px solid #ffc2cc;
+      border-radius: var(--radius-sm); padding: 10px 14px;
+      font-size: 13px; color: var(--brand-dark); margin-bottom: 12px;
+      font-weight: 600;
+    }
+    .success-msg {
+      background: #f0fff8; border: 1px solid #b2f0d8;
+      border-radius: var(--radius-sm); padding: 10px 14px;
+      font-size: 13px; color: #0a7a52; margin-bottom: 12px;
+      font-weight: 600;
+    }
+
+    /* ── Item Picker Grid ───────────────────────────────── */
+    .item-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+      margin-bottom: 16px;
+    }
+    .item-card {
+      border: 2px solid var(--border); border-radius: var(--radius-sm);
+      padding: 12px 8px; text-align: center; cursor: pointer;
+      transition: all 0.15s; background: var(--surface);
+    }
+    .item-card:active { transform: scale(0.95); }
+    .item-card.selected { border-color: var(--brand); background: var(--brand-light); }
+    .item-card .item-emoji { font-size: 28px; line-height: 1; margin-bottom: 4px; }
+    .item-card .item-name { font-size: 11px; font-weight: 700; color: var(--mid); }
+    .item-card.selected .item-name { color: var(--brand); }
+    .item-card .hot-badge {
+      display: inline-block; font-size: 9px; background: var(--accent);
+      color: var(--dark); border-radius: 4px; padding: 1px 5px;
+      font-weight: 800; margin-top: 2px;
+    }
+
+    /* Status tag buttons */
+    .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+    .status-btn {
+      border: 2px solid var(--border); border-radius: var(--radius-sm);
+      padding: 10px 8px; text-align: center; cursor: pointer;
+      transition: all 0.15s; background: var(--surface);
+      font-family: var(--font); font-size: 12px; font-weight: 700; color: var(--mid);
+    }
+    .status-btn:active { transform: scale(0.95); }
+    .status-btn.selected { border-color: var(--accent2); background: #e8fff7; color: #0a7a52; }
+    .status-btn .status-emoji { font-size: 18px; display: block; margin-bottom: 3px; }
+
+    /* Qty buttons */
+    .qty-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px; }
+    .qty-btn {
+      border: 2px solid var(--border); border-radius: var(--radius-sm);
+      padding: 8px; text-align: center; cursor: pointer;
+      transition: all 0.15s; background: var(--surface);
+      font-family: var(--font); font-size: 12px; font-weight: 700; color: var(--mid);
+    }
+    .qty-btn.selected { border-color: var(--accent); background: #fffbea; color: #7a6000; }
+
+    /* Store search */
+    #store-search-wrap { position: relative; margin-bottom: 12px; }
+    #store-search {
+      width: 100%; padding: 12px 14px 12px 40px;
+      border-radius: var(--radius-sm); border: 2px solid var(--border);
+      font-family: var(--font); font-size: 15px; color: var(--dark);
+      background: var(--bg); outline: none; transition: border-color 0.15s;
+    }
+    #store-search:focus { border-color: var(--brand); }
+    #store-search-icon {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      font-size: 18px; pointer-events: none;
+    }
+    #store-results {
+      border: 2px solid var(--border); border-radius: var(--radius-sm);
+      overflow: hidden; margin-bottom: 12px; display: none;
+    }
+    .store-result {
+      padding: 12px 14px; cursor: pointer; transition: background 0.1s;
+      border-bottom: 1px solid var(--border); font-size: 14px;
+    }
+    .store-result:last-child { border-bottom: none; }
+    .store-result:hover { background: var(--bg); }
+    .store-result .store-name { font-weight: 700; color: var(--dark); }
+    .store-result .store-addr { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    #selected-store {
+      background: var(--bg); border: 2px solid var(--accent2);
+      border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 12px;
+      display: none;
+    }
+    #selected-store .store-name { font-weight: 700; font-size: 14px; }
+    #selected-store .store-addr { font-size: 12px; color: var(--muted); }
+
+    /* Step indicators */
+    .step-dots {
+      display: flex; justify-content: center; gap: 6px; margin-bottom: 20px;
+    }
+    .step-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--border); transition: all 0.2s;
+    }
+    .step-dot.active { background: var(--brand); width: 20px; border-radius: 4px; }
+    .step-dot.done { background: var(--accent2); }
+
+    /* ── Pin Popup ──────────────────────────────────────── */
+    .pin-popup {
+      background: var(--surface); border-radius: var(--radius);
+      padding: 14px 16px; min-width: 200px;
+      box-shadow: var(--shadow-lg); border: 1px solid var(--border);
+    }
+    .pin-popup .pp-header {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    .pin-popup .pp-emoji { font-size: 24px; }
+    .pin-popup .pp-item { font-weight: 800; font-size: 14px; color: var(--dark); }
+    .pin-popup .pp-store { font-size: 12px; color: var(--mid); margin-bottom: 2px; }
+    .pin-popup .pp-status { font-size: 12px; color: var(--mid); margin-bottom: 8px; }
+    .pin-popup .pp-meta {
+      font-size: 11px; color: var(--muted); margin-bottom: 10px;
+      font-family: var(--mono);
+    }
+    .pin-popup .pp-health {
+      display: flex; gap: 4px; margin-bottom: 10px;
+    }
+    .health-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .health-dot.on { background: var(--accent2); }
+    .health-dot.off { background: var(--border); }
+    .pin-popup .pp-actions { display: flex; gap: 8px; }
+    .pp-btn {
+      flex: 1; padding: 8px; border-radius: 8px; border: none;
+      font-family: var(--font); font-size: 12px; font-weight: 700;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .pp-btn.confirm { background: #e8fff7; color: #0a7a52; }
+    .pp-btn.confirm:hover { background: #c8ffe8; }
+    .pp-btn.refute { background: #fff0f3; color: var(--brand-dark); }
+    .pp-btn.refute:hover { background: #ffe0e6; }
+    .pp-btn:active { transform: scale(0.95); }
+
+    /* ── Verified badge ─────────────────────────────────── */
+    .verified-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      background: var(--accent); color: var(--dark);
+      border-radius: 6px; padding: 2px 7px;
+      font-size: 10px; font-weight: 800; margin-bottom: 6px;
+    }
+
+    /* ── Toast ──────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) translateY(20px);
+      background: var(--dark); color: white; padding: 10px 20px;
+      border-radius: 20px; font-size: 13px; font-weight: 700;
+      z-index: 999; opacity: 0; transition: all 0.3s;
+      pointer-events: none; white-space: nowrap;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── Guest Banner ───────────────────────────────────── */
+    #guest-banner {
+      position: absolute; top: 64px; left: 16px; right: 16px; z-index: 99;
+      background: var(--dark); color: white; border-radius: var(--radius-sm);
+      padding: 10px 14px; display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; display: none;
+    }
+    #guest-banner p { font-size: 12px; font-weight: 700; }
+    #guest-banner button {
+      flex-shrink: 0; background: var(--brand); color: white;
+      border: none; border-radius: 8px; padding: 6px 12px;
+      font-family: var(--font); font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+
+    /* ── Admin Panel ────────────────────────────────────── */
+    #admin-panel {
+      position: fixed; inset: 0; z-index: 300;
+      background: var(--bg); overflow-y: auto;
+      transform: translateX(100%); transition: transform 0.3s;
+    }
+    #admin-panel.open { transform: translateX(0); }
+    #admin-header {
+      background: var(--dark); color: white;
+      padding: 20px 16px 16px; display: flex; align-items: center; gap: 12px;
+    }
+    #admin-header h1 { font-size: 18px; font-weight: 900; flex: 1; }
+    #admin-close {
+      background: none; border: none; color: white;
+      font-size: 24px; cursor: pointer; padding: 4px;
+    }
+    .admin-section { padding: 16px; border-bottom: 1px solid var(--border); }
+    .admin-section h2 { font-size: 14px; font-weight: 800; color: var(--mid); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .admin-card {
+      background: var(--surface); border-radius: var(--radius-sm);
+      border: 1px solid var(--border); padding: 12px 14px; margin-bottom: 8px;
+    }
+    .admin-card .ac-title { font-weight: 700; font-size: 14px; color: var(--dark); }
+    .admin-card .ac-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .admin-card .ac-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .ac-btn {
+      padding: 6px 12px; border-radius: 8px; border: none;
+      font-family: var(--font); font-size: 12px; font-weight: 700; cursor: pointer;
+    }
+    .ac-btn.danger { background: #fff0f3; color: var(--brand-dark); }
+    .ac-btn.info { background: var(--bg); color: var(--mid); border: 1px solid var(--border); }
+
+    .code-badge {
+      display: inline-block; background: var(--dark); color: var(--accent);
+      font-family: var(--mono); font-size: 13px; padding: 4px 10px;
+      border-radius: 6px; margin-top: 6px; letter-spacing: 1px;
+    }
+
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat-card {
+      background: var(--surface); border-radius: var(--radius-sm);
+      border: 1px solid var(--border); padding: 14px; text-align: center;
+    }
+    .stat-card .stat-num { font-size: 28px; font-weight: 900; color: var(--brand); }
+    .stat-card .stat-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* ── Loading ────────────────────────────────────────── */
+    #loading {
+      position: fixed; inset: 0; z-index: 500;
+      background: var(--surface); display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+    }
+    #loading .logo-big { font-size: 48px; font-weight: 900; color: var(--brand); }
+    #loading .logo-big span { color: var(--dark); }
+    #loading .load-sub { font-size: 14px; color: var(--muted); font-weight: 600; }
+    .spinner {
+      width: 32px; height: 32px; border: 3px solid var(--border);
+      border-top-color: var(--brand); border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Misc ───────────────────────────────────────────── */
+    .divider {
+      display: flex; align-items: center; gap: 10px; margin: 16px 0;
+      font-size: 12px; color: var(--muted); font-weight: 600;
+    }
+    .divider::before, .divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+
+    /* Mapbox overrides */
+    .mapboxgl-ctrl-logo { display: none !important; }
+    .mapboxgl-ctrl-attrib { display: none !important; }
+    .mapboxgl-popup-content { padding: 0 !important; border-radius: var(--radius) !important; overflow: hidden; box-shadow: var(--shadow-lg) !important; }
+    .mapboxgl-popup-tip { display: none !important; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    @media (min-width: 480px) {
+      .sheet { max-width: 480px; margin: 0 auto; border-radius: 24px 24px 0 0; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loading">
+  <div class="logo-big">snagli<span>.</span></div>
+  <div class="spinner"></div>
+  <div class="load-sub">Loading the map…</div>
+</div>
+
+<!-- App -->
+<div id="app">
+
+  <!-- Top Bar -->
+  <div id="topbar">
+    <div id="logo">snagli<span>.</span></div>
+    <div id="filters">
+      <button class="chip active" data-item="all">🗺️ All</button>
+    </div>
+    <button id="auth-btn" onclick="openAuth()">Join</button>
+  </div>
+
+  <!-- Guest Banner -->
+  <div id="guest-banner">
+    <p>Join to drop pins & help your crew find stuff 🎯</p>
+    <button onclick="openAuth()">Join Free</button>
+  </div>
+
+  <!-- Map -->
+  <div id="map"></div>
+
+  <!-- Ticker -->
+  <div id="ticker">
+    <div id="ticker-inner">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- Bottom Nav -->
+  <div id="bottomnav">
+    <button class="nav-btn active" onclick="showView('map')">
+      <span class="icon">🗺️</span>Map
+    </button>
+    <button class="nav-btn" onclick="showView('activity')">
+      <span class="icon">⚡</span>Activity
+    </button>
+    <button id="add-btn" class="guest" onclick="handleAddPin()">＋</button>
+    <button class="nav-btn" onclick="showView('profile')">
+      <span class="icon">👤</span>Profile
+    </button>
+    <button class="nav-btn" id="admin-nav-btn" onclick="openAdmin()" style="display:none">
+      <span class="icon">⚙️</span>Admin
+    </button>
+  </div>
+</div>
+
+<!-- ── AUTH SHEET ──────────────────────────────────────── -->
+<div class="overlay" id="auth-overlay" onclick="closeOnBackdrop(event,'auth-overlay')">
+  <div class="sheet" id="auth-sheet">
+    <div class="sheet-handle"></div>
+
+    <!-- LOGIN -->
+    <div id="auth-login">
+      <div class="sheet-title">Welcome back 👋</div>
+      <div class="sheet-sub">Log in to drop pins and help your crew.</div>
+      <div id="login-error" class="error-msg" style="display:none"></div>
+      <div class="field"><label>Email</label><input type="email" id="login-email" placeholder="you@email.com" /></div>
+      <div class="field"><label>Password</label><input type="password" id="login-pass" placeholder="••••••••" /></div>
+      <button class="btn-primary" onclick="doLogin()" id="login-btn">Log In</button>
+      <div class="form-toggle">Don't have an account? <a onclick="switchAuth('register')">Sign up</a></div>
+      <div class="form-toggle" style="margin-top:8px"><a onclick="switchAuth('forgot')">Forgot password?</a></div>
+    </div>
+
+    <!-- REGISTER -->
+    <div id="auth-register" style="display:none">
+      <div class="sheet-title">Create your account ✨</div>
+      <div class="sheet-sub">You'll need an invite code to join.</div>
+      <div id="reg-error" class="error-msg" style="display:none"></div>
+      <div id="reg-success" class="success-msg" style="display:none"></div>
+      <div class="field"><label>Invite Code</label><input type="text" id="reg-code" placeholder="e.g. SNAG-EARLY" style="text-transform:uppercase" /></div>
+      <div class="field"><label>Email</label><input type="email" id="reg-email" placeholder="you@email.com" /></div>
+      <div class="field"><label>Password</label><input type="password" id="reg-pass" placeholder="at least 8 characters" /></div>
+      <div class="field"><label>Display Name <span style="font-weight:400;text-transform:none;font-size:11px">(optional, shown to friends later)</span></label><input type="text" id="reg-display" placeholder="What friends call you" /></div>
+      <button class="btn-primary" onclick="doRegister()" id="reg-btn">Create Account</button>
+      <div class="form-toggle">Already have an account? <a onclick="switchAuth('login')">Log in</a></div>
+    </div>
+
+    <!-- FORGOT -->
+    <div id="auth-forgot" style="display:none">
+      <div class="sheet-title">Reset password 🔑</div>
+      <div class="sheet-sub">We'll send you a reset link.</div>
+      <div id="forgot-error" class="error-msg" style="display:none"></div>
+      <div id="forgot-success" class="success-msg" style="display:none"></div>
+      <div class="field"><label>Email</label><input type="email" id="forgot-email" placeholder="you@email.com" /></div>
+      <button class="btn-primary" onclick="doForgot()">Send Reset Link</button>
+      <button class="btn-ghost" onclick="switchAuth('login')">Back to Login</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD PIN SHEET ────────────────────────────────────── -->
+<div class="overlay" id="pin-overlay" onclick="closeOnBackdrop(event,'pin-overlay')">
+  <div class="sheet" id="pin-sheet">
+    <div class="sheet-handle"></div>
+    <div class="step-dots">
+      <div class="step-dot" id="dot-0"></div>
+      <div class="step-dot" id="dot-1"></div>
+      <div class="step-dot" id="dot-2"></div>
+    </div>
+
+    <!-- Step 0: Store -->
+    <div id="pin-step-0">
+      <div class="sheet-title">Where'd you find it? 📍</div>
+      <div class="sheet-sub">Search for the store or tap on the map.</div>
+      <div id="store-search-wrap">
+        <span id="store-search-icon">🔍</span>
+        <input type="text" id="store-search" placeholder="Search Target, GameStop…" oninput="searchStores(this.value)" />
+      </div>
+      <div id="store-results"></div>
+      <div id="selected-store">
+        <div class="store-name" id="sel-store-name"></div>
+        <div class="store-addr" id="sel-store-addr"></div>
+      </div>
+      <button class="btn-primary" onclick="pinNextStep(1)" id="step0-next" disabled>Next →</button>
+    </div>
+
+    <!-- Step 1: Item -->
+    <div id="pin-step-1" style="display:none">
+      <div class="sheet-title">What did you find? 🎉</div>
+      <div class="sheet-sub">Pick the item you spotted.</div>
+      <div class="item-grid" id="item-picker-grid"></div>
+      <button class="btn-primary" onclick="pinNextStep(2)" id="step1-next" disabled>Next →</button>
+      <button class="btn-ghost" onclick="pinNextStep(0)">← Back</button>
+    </div>
+
+    <!-- Step 2: Status + Qty -->
+    <div id="pin-step-2" style="display:none">
+      <div class="sheet-title">How's the stock? 📦</div>
+      <div class="sheet-sub">Help your crew know what to expect.</div>
+      <div class="status-grid" id="status-grid">
+        <button class="status-btn" data-status="in_stock" onclick="selectStatus(this)"><span class="status-emoji">✅</span>In Stock</button>
+        <button class="status-btn" data-status="limited" onclick="selectStatus(this)"><span class="status-emoji">📦</span>Limited</button>
+        <button class="status-btn" data-status="saw_it" onclick="selectStatus(this)"><span class="status-emoji">👀</span>Saw It</button>
+        <button class="status-btn" data-status="not_sure" onclick="selectStatus(this)"><span class="status-emoji">❓</span>Not Sure</button>
+      </div>
+      <div style="font-size:12px;font-weight:800;color:var(--mid);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Quantity (optional)</div>
+      <div class="qty-grid">
+        <button class="qty-btn" data-qty="few" onclick="selectQty(this)">A Few</button>
+        <button class="qty-btn" data-qty="some" onclick="selectQty(this)">Some</button>
+        <button class="qty-btn" data-qty="tons" onclick="selectQty(this)">Tons! 🎉</button>
+      </div>
+      <button class="btn-primary" onclick="submitPin()" id="submit-pin-btn" disabled>Drop the Pin 📍</button>
+      <button class="btn-ghost" onclick="pinNextStep(1)">← Back</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── PROFILE SHEET ────────────────────────────────────── -->
+<div class="overlay" id="profile-overlay" onclick="closeOnBackdrop(event,'profile-overlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="profile-name">Your Profile</div>
+    <div class="sheet-sub" id="profile-username"></div>
+    <div id="profile-stats" style="margin-bottom:20px">
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-num" id="stat-pins">0</div><div class="stat-label">Pins Dropped</div></div>
+        <div class="stat-card"><div class="stat-num" id="stat-confirms">0</div><div class="stat-label">Confirmed</div></div>
+      </div>
+    </div>
+    <button class="btn-ghost" onclick="doLogout()">Log Out</button>
+    <button class="btn-ghost" style="margin-top:8px;border-color:transparent;color:var(--muted);font-size:12px" onclick="closeOverlay('profile-overlay')">Close</button>
+  </div>
+</div>
+
+<!-- ── ACTIVITY SHEET ───────────────────────────────────── -->
+<div class="overlay" id="activity-overlay" onclick="closeOnBackdrop(event,'activity-overlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Recent Activity ⚡</div>
+    <div class="sheet-sub">Latest spots from the community.</div>
+    <div id="activity-list"></div>
+    <button class="btn-ghost" onclick="closeOverlay('activity-overlay')">Close</button>
+  </div>
+</div>
+
+<!-- ── ADMIN PANEL ──────────────────────────────────────── -->
+<div id="admin-panel">
+  <div id="admin-header">
+    <span>⚙️</span>
+    <h1>Snagli Admin</h1>
+    <button id="admin-close" onclick="closeAdmin()">✕</button>
+  </div>
+
+  <!-- Stats -->
+  <div class="admin-section">
+    <h2>Overview</h2>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-num" id="admin-stat-pins">—</div><div class="stat-label">Active Pins</div></div>
+      <div class="stat-card"><div class="stat-num" id="admin-stat-users">—</div><div class="stat-label">Users</div></div>
+    </div>
+  </div>
+
+  <!-- Invite Codes -->
+  <div class="admin-section">
+    <h2>Invite Codes</h2>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="text" id="new-code-input" placeholder="e.g. SNAG-LAUNCH" style="flex:1;padding:10px 12px;border:2px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:14px;outline:none;text-transform:uppercase" />
+      <button onclick="createInviteCode()" style="padding:10px 14px;background:var(--brand);color:white;border:none;border-radius:var(--radius-sm);font-family:var(--font);font-weight:800;cursor:pointer">Add</button>
+    </div>
+    <div id="codes-list"></div>
+  </div>
+
+  <!-- Items Catalog -->
+  <div class="admin-section">
+    <h2>Item Catalog</h2>
+    <div id="admin-items-list"></div>
+    <div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:var(--radius-sm);border:1px dashed var(--border)">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px">ADD NEW ITEM</div>
+      <div style="display:grid;grid-template-columns:60px 1fr;gap:8px;margin-bottom:8px">
+        <input type="text" id="new-item-emoji" placeholder="🎴" style="padding:8px;border:2px solid var(--border);border-radius:8px;font-size:20px;text-align:center;outline:none" maxlength="2" />
+        <input type="text" id="new-item-name" placeholder="Item name" style="padding:8px 12px;border:2px solid var(--border);border-radius:8px;font-family:var(--font);font-size:14px;outline:none" />
+      </div>
+      <button onclick="createItem()" style="width:100%;padding:8px;background:var(--dark);color:white;border:none;border-radius:8px;font-family:var(--font);font-weight:800;cursor:pointer;font-size:13px">Add Item</button>
+    </div>
+  </div>
+
+  <!-- Active Pins -->
+  <div class="admin-section">
+    <h2>Active Pins</h2>
+    <div id="admin-pins-list"></div>
+  </div>
+
+  <div style="padding:20px;text-align:center">
+    <button class="btn-ghost" onclick="closeAdmin()">Close Admin</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ── Config ──────────────────────────────────────────────
+const SUPABASE_URL = 'https://ohujtnwigrifhoelzkny.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_MN4Cw2BXH_WUFcWySa3uAQ_rrpzFzSi';
+const MAPBOX_TOKEN = 'pk.eyJ1IjoiYW5keWxhdXJpZHNlbiIsImEiOiJjbW4wbHFsbWgwbDFqMndxNTEwM3hrM29oIn0.af6DmsUAZdIcKJyP2i5Clg';
+
+// ── Init ─────────────────────────────────────────────────
+const { createClient } = supabase;
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let map, currentUser, currentProfile, markers = {}, activeFilter = 'all';
+let pinState = { step: 0, store: null, item: null, status: null, qty: null };
+let storeSearchTimer = null;
+
+// Default items (used if DB not seeded yet)
+const DEFAULT_ITEMS = [
+  { id: 'pokemon',   name: 'Pokémon Cards',  emoji: '🎴', color: '#FFD166', hot: true  },
+  { id: 'needos',    name: 'Needos',          emoji: '🪆', color: '#FF4D6D', hot: true  },
+  { id: 'squishies', name: 'Squishies',       emoji: '🧸', color: '#A8DADC', hot: false },
+  { id: 'slime',     name: 'Slime',           emoji: '🟢', color: '#06D6A0', hot: false },
+  { id: 'minibrands',name: 'Mini Brands',     emoji: '🛒', color: '#F72585', hot: true  },
+  { id: 'squishmallows', name: 'Squishmallows', emoji: '☁️', color: '#B5EAD7', hot: false },
+  { id: 'trading',   name: 'Trading Cards',   emoji: '🃏', color: '#4361EE', hot: false },
+  { id: 'fidget',    name: 'Fidget Toys',     emoji: '🌀', color: '#7209B7', hot: false },
+  { id: 'blindbox',  name: 'Blind Boxes',     emoji: '📦', color: '#F4A261', hot: false },
+  { id: 'lol',       name: 'LOL Surprise',    emoji: '💜', color: '#C77DFF', hot: false },
+];
+
+let ITEMS = [...DEFAULT_ITEMS];
+
+// Status labels
+const STATUS_LABELS = {
+  in_stock: '✅ In Stock',
+  limited:  '📦 Limited',
+  saw_it:   '👀 Saw It',
+  not_sure: '❓ Not Sure'
+};
+
+// ── Boot ─────────────────────────────────────────────────
+async function boot() {
+  initMap();
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) await loadUser(session.user);
+  await loadItems();
+  await loadPins();
+  buildFilters();
+  startTicker();
+  document.getElementById('loading').style.display = 'none';
+
+  sb.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN') {
+      await loadUser(session.user);
+      closeOverlay('auth-overlay');
+      showToast('Welcome to Snagli! 🎉');
+    }
+    if (event === 'SIGNED_OUT') {
+      currentUser = null; currentProfile = null;
+      updateAuthUI();
+    }
+  });
+
+  // Realtime pin updates
+  sb.channel('pins').on('postgres_changes',
+    { event: '*', schema: 'public', table: 'pins' },
+    () => loadPins()
+  ).subscribe();
+}
+
+// ── Map ──────────────────────────────────────────────────
+function initMap() {
+  mapboxgl.accessToken = MAPBOX_TOKEN;
+  map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/light-v11',
+    center: [-87.6298, 41.8781], // Chicago default
+    zoom: 11,
+    attributionControl: false
+  });
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right');
+  map.addControl(new mapboxgl.GeolocateControl({
+    positionOptions: { enableHighAccuracy: true },
+    trackUserLocation: false,
+    showUserHeading: false
+  }), 'bottom-right');
+}
+
+// ── Auth ─────────────────────────────────────────────────
+async function loadUser(user) {
+  currentUser = user;
+  const { data } = await sb.from('profiles').select('*').eq('id', user.id).single();
+  currentProfile = data;
+  updateAuthUI();
+  loadProfileStats();
+}
+
+function updateAuthUI() {
+  const btn = document.getElementById('auth-btn');
+  const addBtn = document.getElementById('add-btn');
+  const adminBtn = document.getElementById('admin-nav-btn');
+  if (currentUser) {
+    btn.textContent = currentProfile?.public_username || '👤';
+    btn.onclick = () => openOverlay('profile-overlay');
+    addBtn.classList.remove('guest');
+    document.getElementById('profile-name').textContent = currentProfile?.display_name || currentProfile?.public_username || 'Your Profile';
+    document.getElementById('profile-username').textContent = '@' + (currentProfile?.public_username || '');
+    if (currentProfile?.is_admin) {
+      adminBtn.style.display = 'flex';
+    }
+  } else {
+    btn.textContent = 'Join';
+    btn.onclick = openAuth;
+    addBtn.classList.add('guest');
+    adminBtn.style.display = 'none';
+  }
+}
+
+function openAuth() { switchAuth('login'); openOverlay('auth-overlay'); }
+
+function switchAuth(view) {
+  ['login','register','forgot'].forEach(v => {
+    document.getElementById('auth-' + v).style.display = v === view ? 'block' : 'none';
+  });
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const btn   = document.getElementById('login-btn');
+  const err   = document.getElementById('login-error');
+  err.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Logging in…';
+  const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+  if (error) { err.textContent = error.message; err.style.display = 'block'; }
+  btn.disabled = false; btn.textContent = 'Log In';
+}
+
+async function doRegister() {
+  const code    = document.getElementById('reg-code').value.trim().toUpperCase();
+  const email   = document.getElementById('reg-email').value.trim();
+  const pass    = document.getElementById('reg-pass').value;
+  const display = document.getElementById('reg-display').value.trim();
+  const btn     = document.getElementById('reg-btn');
+  const err     = document.getElementById('reg-error');
+  const suc     = document.getElementById('reg-success');
+  err.style.display = 'none'; suc.style.display = 'none';
+
+  if (!code) { err.textContent = 'Please enter your invite code.'; err.style.display = 'block'; return; }
+  if (pass.length < 8) { err.textContent = 'Password must be at least 8 characters.'; err.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Checking code…';
+
+  // Validate invite code
+  const { data: codeData, error: codeErr } = await sb
+    .from('invite_codes')
+    .select('*')
+    .eq('code', code)
+    .eq('active', true)
+    .single();
+
+  if (codeErr || !codeData) {
+    err.textContent = 'That invite code isn\'t valid or has expired. Ask a friend for a fresh one!';
+    err.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Create Account';
+    return;
+  }
+
+  // Check single-use
+  if (codeData.single_use && codeData.used_count >= 1) {
+    err.textContent = 'That code has already been used. Ask for another!';
+    err.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Create Account';
+    return;
+  }
+
+  btn.textContent = 'Creating account…';
+
+  // Generate public username
+  const username = await generateUsername();
+
+  const { error: signupErr } = await sb.auth.signUp({
+    email, password: pass,
+    options: {
+      data: { public_username: username, display_name: display, invite_code: code }
+    }
+  });
+
+  if (signupErr) {
+    err.textContent = signupErr.message;
+    err.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Create Account';
+    return;
+  }
+
+  // Increment code usage
+  await sb.from('invite_codes').update({ used_count: (codeData.used_count || 0) + 1 }).eq('code', code);
+
+  suc.textContent = '✅ Account created! Check your email to confirm, then log in.';
+  suc.style.display = 'block';
+  btn.disabled = false; btn.textContent = 'Create Account';
+}
+
+async function doForgot() {
+  const email = document.getElementById('forgot-email').value.trim();
+  const err = document.getElementById('forgot-error');
+  const suc = document.getElementById('forgot-success');
+  err.style.display = 'none'; suc.style.display = 'none';
+  const { error } = await sb.auth.resetPasswordForEmail(email);
+  if (error) { err.textContent = error.message; err.style.display = 'block'; }
+  else { suc.textContent = 'Reset link sent! Check your inbox.'; suc.style.display = 'block'; }
+}
+
+async function doLogout() {
+  await sb.auth.signOut();
+  closeOverlay('profile-overlay');
+  showToast('Logged out. See you next snagli! 👋');
+}
+
+// ── Username Generator ────────────────────────────────────
+const ADJECTIVES = ['Quick','Bold','Swift','Bright','Calm','Cool','Sharp','Wild','Rare','Keen',
+  'Brave','Clever','Proud','Merry','Nimble','Jolly','Lively','Mighty','Noble','Sunny',
+  'Fuzzy','Cozy','Lucky','Zippy','Peppy','Fancy','Snappy','Bouncy','Speedy','Dandy'];
+const ANIMALS = ['Otter','Falcon','Panda','Tiger','Koala','Lemur','Gecko','Bison','Moose','Robin',
+  'Lynx','Crane','Viper','Finch','Quail','Newt','Dingo','Ibis','Tapir','Wombat',
+  'Alpaca','Ferret','Gopher','Iguana','Jaguar','Kestrel','Llama','Marmot','Narwhal','Ocelot'];
+
+async function generateUsername() {
+  for (let i = 0; i < 20; i++) {
+    const adj  = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+    const ani  = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
+    const num  = Math.floor(Math.random() * 99) + 1;
+    const name = `${adj}${ani}${num}`;
+    const { data } = await sb.from('profiles').select('id').eq('public_username', name).single();
+    if (!data) return name;
+  }
+  return `Spotter${Math.floor(Math.random() * 9999)}`;
+}
+
+// ── Items ─────────────────────────────────────────────────
+async function loadItems() {
+  const { data } = await sb.from('items').select('*').eq('active', true).order('sort_order');
+  if (data && data.length > 0) {
+    ITEMS = data.map(d => ({
+      id: d.id, name: d.name, emoji: d.emoji,
+      color: d.color || '#FF4D6D', hot: d.hot || false
+    }));
+  }
+}
+
+// ── Pins ──────────────────────────────────────────────────
+async function loadPins() {
+  const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+  let query = sb.from('pins').select(`*, profiles(public_username)`).eq('removed', false).gte('last_activity', cutoff);
+  if (activeFilter !== 'all') query = query.eq('item_id', activeFilter);
+  const { data } = await query.order('created_at', { ascending: false });
+  clearMarkers();
+  if (data) data.forEach(addPinMarker);
+  updateActivityList(data || []);
+}
+
+function clearMarkers() {
+  Object.values(markers).forEach(m => m.remove());
+  markers = {};
+}
+
+function addPinMarker(pin) {
+  const item = ITEMS.find(i => i.id === pin.item_id) || ITEMS[0];
+  const health = pin.health_tier ?? 3;
+  if (health === 0) return;
+
+  const opacity = health === 3 ? 1 : health === 2 ? 0.75 : 0.5;
+  const size = health === 3 ? 44 : health === 2 ? 40 : 36;
+
+  const el = document.createElement('div');
+  el.style.cssText = `
+    width:${size}px; height:${size}px; border-radius:50%;
+    background:${item.color}; border: 3px solid white;
+    display:flex; align-items:center; justify-content:center;
+    font-size:${size * 0.45}px; cursor:pointer;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    opacity:${opacity};
+    transition: transform 0.15s;
+  `;
+  el.textContent = item.emoji;
+  el.onmouseenter = () => el.style.transform = 'scale(1.15)';
+  el.onmouseleave = () => el.style.transform = 'scale(1)';
+
+  const popup = new mapboxgl.Popup({ offset: 8, closeButton: false })
+    .setHTML(buildPopupHTML(pin, item));
+
+  const marker = new mapboxgl.Marker(el)
+    .setLngLat([pin.longitude, pin.latitude])
+    .setPopup(popup)
+    .addTo(map);
+
+  markers[pin.id] = marker;
+}
+
+function buildPopupHTML(pin, item) {
+  const age    = timeAgo(pin.created_at);
+  const health = pin.health_tier ?? 3;
+  const confirms = pin.confirm_count || 0;
+  const isVerified = confirms >= 3;
+  const username = pin.profiles?.public_username || 'Spotter';
+
+  const dots = [3,2,1].map(i =>
+    `<div class="health-dot ${i <= health ? 'on' : 'off'}"></div>`
+  ).join('');
+
+  const verifiedBadge = isVerified
+    ? `<div class="verified-badge">🔥 Verified</div>` : '';
+
+  return `<div class="pin-popup">
+    <div class="pp-header">
+      <span class="pp-emoji">${item.emoji}</span>
+      <div>
+        <div class="pp-item">${item.name}</div>
+        ${verifiedBadge}
+      </div>
+    </div>
+    <div class="pp-store">${pin.store_name}</div>
+    <div class="pp-status">${STATUS_LABELS[pin.status] || pin.status}${pin.quantity ? ' · ' + pin.quantity : ''}</div>
+    <div class="pp-meta">@${username} · ${age}<br>${confirms} confirm${confirms !== 1 ? 's' : ''}</div>
+    <div class="pp-health">${dots}</div>
+    <div class="pp-actions">
+      <button class="pp-btn confirm" onclick="votePin('${pin.id}','confirm')">✅ Confirm</button>
+      <button class="pp-btn refute"  onclick="votePin('${pin.id}','refute')">❌ Not There</button>
+    </div>
+  </div>`;
+}
+
+async function votePin(pinId, type) {
+  if (!currentUser) { openAuth(); return; }
+
+  const { data: pin } = await sb.from('pins').select('*').eq('id', pinId).single();
+  if (!pin) return;
+
+  // Can't vote on own pin
+  if (pin.user_id === currentUser.id) { showToast("Can't vote on your own pin 😅"); return; }
+
+  // Check existing vote
+  const { data: existing } = await sb.from('pin_votes')
+    .select('id').eq('pin_id', pinId).eq('user_id', currentUser.id).single();
+  if (existing) { showToast('Already voted on this one!'); return; }
+
+  // Record vote
+  await sb.from('pin_votes').insert({ pin_id: pinId, user_id: currentUser.id, vote_type: type });
+
+  let updates = { last_activity: new Date().toISOString() };
+
+  if (type === 'confirm') {
+    updates.health_tier   = 3;
+    updates.confirm_count = (pin.confirm_count || 0) + 1;
+    updates.last_activity = new Date().toISOString();
+    showToast('Confirmed! 🙌 Pin is fresh.');
+  } else {
+    const newHealth = Math.max(0, (pin.health_tier ?? 3) - 1);
+    updates.health_tier = newHealth;
+    if (newHealth === 0) {
+      updates.removed = true;
+      showToast('Removed — thanks for keeping the map clean! 🗺️');
+    } else {
+      showToast('Got it — pin marked as uncertain ⚠️');
+    }
+  }
+
+  await sb.from('pins').update(updates).eq('id', pinId);
+
+  // Close popup and reload
+  Object.values(markers).forEach(m => m.getPopup()?.remove());
+  await loadPins();
+}
+
+// ── Add Pin Flow ──────────────────────────────────────────
+function handleAddPin() {
+  if (!currentUser) { openAuth(); return; }
+  resetPinState();
+  openOverlay('pin-overlay');
+}
+
+function resetPinState() {
+  pinState = { step: 0, store: null, item: null, status: null, qty: null };
+  document.getElementById('store-search').value = '';
+  document.getElementById('store-results').style.display = 'none';
+  document.getElementById('selected-store').style.display = 'none';
+  document.getElementById('step0-next').disabled = true;
+  document.getElementById('step1-next').disabled = true;
+  document.getElementById('submit-pin-btn').disabled = true;
+  document.querySelectorAll('.status-btn').forEach(b => b.classList.remove('selected'));
+  document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('selected'));
+  buildItemGrid();
+  pinNextStep(0);
+}
+
+function pinNextStep(step) {
+  [0,1,2].forEach(i => {
+    document.getElementById(`pin-step-${i}`).style.display = i === step ? 'block' : 'none';
+    const dot = document.getElementById(`dot-${i}`);
+    dot.className = 'step-dot' + (i < step ? ' done' : i === step ? ' active' : '');
+  });
+  pinState.step = step;
+}
+
+function buildItemGrid() {
+  const grid = document.getElementById('item-picker-grid');
+  grid.innerHTML = ITEMS.map(item => `
+    <div class="item-card" data-id="${item.id}" onclick="selectItem(this,'${item.id}')">
+      <div class="item-emoji">${item.emoji}</div>
+      <div class="item-name">${item.name}</div>
+      ${item.hot ? '<div class="hot-badge">🔥 HOT</div>' : ''}
+    </div>
+  `).join('');
+}
+
+function selectItem(el, id) {
+  document.querySelectorAll('.item-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  pinState.item = id;
+  document.getElementById('step1-next').disabled = false;
+}
+
+function selectStatus(el) {
+  document.querySelectorAll('.status-btn').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+  pinState.status = el.dataset.status;
+  checkSubmitReady();
+}
+
+function selectQty(el) {
+  document.querySelectorAll('.qty-btn').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+  pinState.qty = el.dataset.qty;
+}
+
+function checkSubmitReady() {
+  document.getElementById('submit-pin-btn').disabled = !pinState.status;
+}
+
+// Store search (mock for now — Mapbox Geocoding used as fallback)
+async function searchStores(q) {
+  if (storeSearchTimer) clearTimeout(storeSearchTimer);
+  if (q.length < 2) { document.getElementById('store-results').style.display = 'none'; return; }
+  storeSearchTimer = setTimeout(() => geocodeStore(q), 400);
+}
+
+async function geocodeStore(q) {
+  if (!mapboxgl.accessToken || mapboxgl.accessToken === 'MAPBOX_TOKEN_PLACEHOLDER') {
+    // Fallback: show sample stores for demo
+    showMockStores(q);
+    return;
+  }
+  try {
+    const center = map.getCenter();
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?proximity=${center.lng},${center.lat}&types=poi&access_token=${mapboxgl.accessToken}&limit=4`;
+    const res  = await fetch(url);
+    const data = await res.json();
+    showStoreResults(data.features || []);
+  } catch(e) { showMockStores(q); }
+}
+
+function showMockStores(q) {
+  const mocks = [
+    { text: 'Target', place_name: '1234 Main St, Chicago, IL', geometry: { coordinates: [-87.63, 41.88] } },
+    { text: 'GameStop', place_name: '567 Oak Ave, Chicago, IL', geometry: { coordinates: [-87.64, 41.87] } },
+    { text: 'Five Below', place_name: '890 State St, Chicago, IL', geometry: { coordinates: [-87.625, 41.879] } },
+  ].filter(s => s.text.toLowerCase().includes(q.toLowerCase()));
+  showStoreResults(mocks);
+}
+
+function showStoreResults(features) {
+  const container = document.getElementById('store-results');
+  if (!features.length) { container.style.display = 'none'; return; }
+  container.innerHTML = features.map((f,i) => `
+    <div class="store-result" onclick="selectStore(${i})">
+      <div class="store-name">${f.text || f.place_name}</div>
+      <div class="store-addr">${f.place_name || ''}</div>
+    </div>
+  `).join('');
+  container.style.display = 'block';
+  container._features = features;
+}
+
+function selectStore(i) {
+  const f = document.getElementById('store-results')._features[i];
+  pinState.store = {
+    name: f.text || f.place_name.split(',')[0],
+    address: f.place_name || '',
+    lat: f.geometry.coordinates[1],
+    lng: f.geometry.coordinates[0]
+  };
+  document.getElementById('sel-store-name').textContent = pinState.store.name;
+  document.getElementById('sel-store-addr').textContent = pinState.store.address;
+  document.getElementById('selected-store').style.display = 'block';
+  document.getElementById('store-results').style.display = 'none';
+  document.getElementById('store-search').value = pinState.store.name;
+  document.getElementById('step0-next').disabled = false;
+}
+
+async function submitPin() {
+  if (!pinState.store || !pinState.item || !pinState.status) return;
+  const btn = document.getElementById('submit-pin-btn');
+  btn.disabled = true; btn.textContent = 'Dropping pin… 📍';
+
+  const now = new Date().toISOString();
+  const { error } = await sb.from('pins').insert({
+    user_id:       currentUser.id,
+    item_id:       pinState.item,
+    store_name:    pinState.store.name,
+    store_address: pinState.store.address,
+    latitude:      pinState.store.lat,
+    longitude:     pinState.store.lng,
+    status:        pinState.status,
+    quantity:      pinState.qty,
+    health_tier:   3,
+    confirm_count: 0,
+    removed:       false,
+    last_activity: now,
+    created_at:    now,
+  });
+
+  btn.disabled = false; btn.textContent = 'Drop the Pin 📍';
+
+  if (error) { showToast('Something went wrong. Try again!'); return; }
+
+  closeOverlay('pin-overlay');
+  showToast('Pin dropped! Your crew can see it now 🎉');
+  map.flyTo({ center: [pinState.store.lng, pinState.store.lat], zoom: 14, duration: 1000 });
+  await loadPins();
+}
+
+// share card text helper
+function buildShareText(pin, item) {
+  return `${item.emoji} Found ${item.name} at ${pin.store_name}! 🎯 Check Snagli → snagli.com`;
+}
+
+// ── Filters ───────────────────────────────────────────────
+function buildFilters() {
+  const bar = document.getElementById('filters');
+  bar.innerHTML = `<button class="chip ${activeFilter === 'all' ? 'active' : ''}" data-item="all" onclick="setFilter('all')">🗺️ All</button>`;
+  ITEMS.forEach(item => {
+    bar.innerHTML += `<button class="chip ${activeFilter === item.id ? 'active' : ''}" data-item="${item.id}" onclick="setFilter('${item.id}')">${item.emoji} ${item.name}</button>`;
+  });
+}
+
+function setFilter(id) {
+  activeFilter = id;
+  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.item === id));
+  loadPins();
+}
+
+// ── Ticker ────────────────────────────────────────────────
+function startTicker() {
+  loadPins().then(() => {
+    // Ticker populated via updateActivityList
+  });
+}
+
+function updateActivityList(pins) {
+  const recent = pins.slice(0, 20);
+
+  // Ticker
+  const inner = document.getElementById('ticker-inner');
+  if (!recent.length) return;
+  const items_html = recent.map(p => {
+    const item = ITEMS.find(i => i.id === p.item_id) || { emoji: '📍', name: 'Find' };
+    return `<span class="tick-item"><span class="dot"></span>${item.emoji} ${item.name} spotted at ${p.store_name} · ${timeAgo(p.created_at)}</span>`;
+  }).join('');
+  inner.innerHTML = items_html + items_html; // double for seamless loop
+
+  // Activity sheet
+  const list = document.getElementById('activity-list');
+  if (!recent.length) { list.innerHTML = '<div style="color:var(--muted);font-size:14px;padding:20px 0;text-align:center">No recent activity yet.<br>Be the first to drop a pin!</div>'; return; }
+  list.innerHTML = recent.map(p => {
+    const item = ITEMS.find(i => i.id === p.item_id) || { emoji: '📍', name: 'Find' };
+    return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:28px;width:40px;text-align:center">${item.emoji}</div>
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:14px">${item.name}</div>
+        <div style="font-size:12px;color:var(--mid)">${p.store_name}</div>
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${STATUS_LABELS[p.status] || ''} · ${timeAgo(p.created_at)}</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);text-align:right">${p.confirm_count || 0} ✓</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Profile Stats ─────────────────────────────────────────
+async function loadProfileStats() {
+  if (!currentUser) return;
+  const { count: pins }     = await sb.from('pins').select('*', { count: 'exact', head: true }).eq('user_id', currentUser.id);
+  const { count: confirms } = await sb.from('pin_votes').select('*', { count: 'exact', head: true }).eq('user_id', currentUser.id).eq('vote_type', 'confirm');
+  document.getElementById('stat-pins').textContent     = pins || 0;
+  document.getElementById('stat-confirms').textContent = confirms || 0;
+}
+
+// ── Views ─────────────────────────────────────────────────
+function showView(v) {
+  if (v === 'activity') openOverlay('activity-overlay');
+  if (v === 'profile') {
+    if (!currentUser) { openAuth(); return; }
+    openOverlay('profile-overlay');
+  }
+}
+
+// ── Admin ─────────────────────────────────────────────────
+function openAdmin() {
+  document.getElementById('admin-panel').classList.add('open');
+  loadAdminData();
+}
+function closeAdmin() { document.getElementById('admin-panel').classList.remove('open'); }
+
+async function loadAdminData() {
+  // Stats
+  const { count: pinCount  } = await sb.from('pins').select('*', { count: 'exact', head: true }).eq('removed', false);
+  const { count: userCount } = await sb.from('profiles').select('*', { count: 'exact', head: true });
+  document.getElementById('admin-stat-pins').textContent  = pinCount  || 0;
+  document.getElementById('admin-stat-users').textContent = userCount || 0;
+
+  // Invite codes
+  const { data: codes } = await sb.from('invite_codes').select('*').order('created_at', { ascending: false });
+  const codesList = document.getElementById('codes-list');
+  codesList.innerHTML = (codes || []).map(c => `
+    <div class="admin-card">
+      <div class="ac-title">${c.single_use ? 'Single-use' : 'Multi-use'} code</div>
+      <div class="code-badge">${c.code}</div>
+      <div class="ac-meta">${c.used_count || 0} uses · ${c.active ? '✅ Active' : '❌ Inactive'}${c.expires_at ? ' · expires ' + new Date(c.expires_at).toLocaleDateString() : ''}</div>
+      <div class="ac-actions">
+        ${c.active ? `<button class="ac-btn danger" onclick="deactivateCode('${c.id}')">Deactivate</button>` : ''}
+        <button class="ac-btn info" onclick="copyCode('${c.code}')">Copy</button>
+      </div>
+    </div>
+  `).join('') || '<div style="color:var(--muted);font-size:13px">No codes yet.</div>';
+
+  // Items
+  const itemsList = document.getElementById('admin-items-list');
+  itemsList.innerHTML = ITEMS.map(item => `
+    <div class="admin-card" style="display:flex;align-items:center;gap:12px">
+      <span style="font-size:24px">${item.emoji}</span>
+      <div style="flex:1">
+        <div class="ac-title">${item.name}</div>
+        <div class="ac-meta">${item.hot ? '🔥 Hot Right Now' : 'Standard'}</div>
+      </div>
+      <button class="ac-btn ${item.hot ? 'danger' : 'info'}" onclick="toggleHot('${item.id}',${!item.hot})">
+        ${item.hot ? 'Un-hot' : '🔥 Mark Hot'}
+      </button>
+    </div>
+  `).join('');
+
+  // Active pins
+  const { data: pins } = await sb.from('pins').select('*').eq('removed', false).order('created_at', { ascending: false }).limit(20);
+  const pinsList = document.getElementById('admin-pins-list');
+  pinsList.innerHTML = (pins || []).map(p => {
+    const item = ITEMS.find(i => i.id === p.item_id) || { emoji: '📍', name: p.item_id };
+    return `<div class="admin-card">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:20px">${item.emoji}</span>
+        <div style="flex:1">
+          <div class="ac-title">${item.name} — ${p.store_name}</div>
+          <div class="ac-meta">Tier ${p.health_tier} · ${p.confirm_count || 0} confirms · ${timeAgo(p.created_at)}</div>
+        </div>
+        <button class="ac-btn danger" onclick="adminRemovePin('${p.id}')">Remove</button>
+      </div>
+    </div>`;
+  }).join('') || '<div style="color:var(--muted);font-size:13px">No active pins.</div>';
+}
+
+async function createInviteCode() {
+  const input = document.getElementById('new-code-input');
+  const code  = input.value.trim().toUpperCase();
+  if (!code) { showToast('Enter a code first'); return; }
+  const { error } = await sb.from('invite_codes').insert({
+    code, active: true, single_use: false, used_count: 0
+  });
+  if (error) { showToast('Error: ' + error.message); return; }
+  input.value = '';
+  showToast('Code created! 🎉');
+  loadAdminData();
+}
+
+async function deactivateCode(id) {
+  await sb.from('invite_codes').update({ active: false }).eq('id', id);
+  loadAdminData();
+}
+
+function copyCode(code) {
+  navigator.clipboard.writeText(code).then(() => showToast('Code copied! 📋'));
+}
+
+async function createItem() {
+  const emoji = document.getElementById('new-item-emoji').value.trim();
+  const name  = document.getElementById('new-item-name').value.trim();
+  if (!emoji || !name) { showToast('Add an emoji and name'); return; }
+  const id = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  const { error } = await sb.from('items').insert({
+    id, name, emoji, active: true, hot: false, sort_order: 99, color: '#FF4D6D'
+  });
+  if (error) { showToast('Error: ' + error.message); return; }
+  document.getElementById('new-item-emoji').value = '';
+  document.getElementById('new-item-name').value = '';
+  showToast(`${emoji} ${name} added!`);
+  await loadItems();
+  buildFilters();
+  loadAdminData();
+}
+
+async function toggleHot(itemId, hot) {
+  await sb.from('items').update({ hot }).eq('id', itemId);
+  await loadItems();
+  buildFilters();
+  loadAdminData();
+}
+
+async function adminRemovePin(id) {
+  await sb.from('pins').update({ removed: true }).eq('id', id);
+  showToast('Pin removed ✓');
+  await loadPins();
+  loadAdminData();
+}
+
+// ── Overlays ──────────────────────────────────────────────
+function openOverlay(id) { document.getElementById(id).classList.add('open'); }
+function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
+function closeOnBackdrop(e, id) { if (e.target === document.getElementById(id)) closeOverlay(id); }
+
+// ── Toast ─────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ── Utilities ─────────────────────────────────────────────
+function timeAgo(ts) {
+  const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
+  if (diff < 60)   return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400)return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
+}
+
+// ── Boot ──────────────────────────────────────────────────
+window.addEventListener('load', boot);
+</script>
+</body>
+</html>
