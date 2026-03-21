@@ -164,19 +164,23 @@
       height: 80px; background: var(--surface);
       border-top: 1px solid var(--border);
       box-shadow: 0 -4px 24px rgba(26,26,46,0.10);
-      display: flex; align-items: center; justify-content: space-around;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
       padding: 0 8px 12px;
     }
     .nav-btn {
-      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
       background: none; border: none; cursor: pointer;
-      font-family: var(--font); font-size: 10px; font-weight: 700;
-      color: var(--muted); padding: 6px 16px; border-radius: var(--radius-sm);
-      transition: all 0.15s;
+      font-family: var(--font); font-size: 11px; font-weight: 700;
+      color: var(--muted); padding: 6px 8px; border-radius: var(--radius-sm);
+      transition: all 0.15s; width: 100%;
     }
-    .nav-btn .icon { font-size: 22px; line-height: 1; }
+    .nav-btn .icon { font-size: 24px; line-height: 1; }
     .nav-btn.active { color: var(--brand); }
     .nav-btn:active { transform: scale(0.93); }
+    #activity-nav-btn { justify-content: center; }
+    #profile-nav-btn  { justify-content: center; }
 
     /* ADD button - center, overlaps map */
     #add-btn {
@@ -571,15 +575,12 @@
 
   <!-- Bottom Nav -->
   <div id="bottomnav">
-    <button class="nav-btn" onclick="showView('activity')">
+    <button class="nav-btn" id="activity-nav-btn" onclick="showView('activity')">
       <span class="icon">⚡</span>Activity
     </button>
     <button id="add-btn" class="guest" onclick="handleAddPin()">＋</button>
-    <button class="nav-btn" onclick="showView('profile')">
-      <span class="icon">👤</span>Profile
-    </button>
-    <button class="nav-btn" id="admin-nav-btn" onclick="openAdmin()" style="display:none">
-      <span class="icon">⚙️</span>Admin
+    <button class="nav-btn" id="profile-nav-btn" onclick="showView('profile')">
+      <span class="icon">🎯</span>Profile
     </button>
   </div>
 </div>
@@ -699,14 +700,27 @@
 <div class="overlay" id="profile-overlay" onclick="closeOnBackdrop(event,'profile-overlay')">
   <div class="sheet">
     <div class="sheet-handle"></div>
-    <div class="sheet-title" id="profile-name">Your Profile</div>
-    <div class="sheet-sub" id="profile-username"></div>
-    <div id="profile-stats" style="margin-bottom:20px">
-      <div class="stat-grid">
-        <div class="stat-card"><div class="stat-num" id="stat-pins">0</div><div class="stat-label">Pins Dropped</div></div>
-        <div class="stat-card"><div class="stat-num" id="stat-confirms">0</div><div class="stat-label">Confirmed</div></div>
+
+    <!-- Avatar + name -->
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+      <div id="profile-avatar-big" style="width:56px;height:56px;border-radius:50%;background:var(--brand);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;color:white;flex-shrink:0"></div>
+      <div>
+        <div class="sheet-title" id="profile-name" style="margin-bottom:2px">Your Profile</div>
+        <div style="font-size:13px;color:var(--muted);font-family:var(--mono)" id="profile-username"></div>
       </div>
     </div>
+
+    <!-- Stats -->
+    <div class="stat-grid" style="margin-bottom:20px">
+      <div class="stat-card"><div class="stat-num" id="stat-pins">0</div><div class="stat-label">Pins Dropped</div></div>
+      <div class="stat-card"><div class="stat-num" id="stat-confirms">0</div><div class="stat-label">Confirms Given</div></div>
+    </div>
+
+    <!-- Admin access — only shown to admins -->
+    <button id="profile-admin-btn" onclick="closeOverlay('profile-overlay');openAdmin();" class="btn-ghost" style="display:none;margin-bottom:8px;border-color:var(--dark);color:var(--dark);font-weight:800">
+      ⚙️ Admin Dashboard
+    </button>
+
     <button class="btn-ghost" onclick="doLogout()">Log Out</button>
     <button class="btn-ghost" style="margin-top:8px;border-color:transparent;color:var(--muted);font-size:12px" onclick="closeOverlay('profile-overlay')">Close</button>
   </div>
@@ -776,7 +790,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.2.2</div>
+<div id="version-tag">v0.2.3</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -898,26 +912,25 @@ function initMap() {
     }, 6000);
 
     map.on('click', async (e) => {
-      // Check for any named place across all label layers
-      const POI_LAYERS = [
-        'poi-label', 'transit-label', 'airport-label',
-        'settlement-label', 'natural-point-label'
-      ].filter(l => {
+      // Use a generous 20px hit radius around the tap point for touch accuracy
+      const bbox = [
+        [e.point.x - 20, e.point.y - 20],
+        [e.point.x + 20, e.point.y + 20]
+      ];
+      const POI_LAYERS = ['poi-label', 'transit-label'].filter(l => {
         try { return !!map.getLayer(l); } catch { return false; }
       });
-
       const features = POI_LAYERS.length
-        ? map.queryRenderedFeatures(e.point, { layers: POI_LAYERS })
+        ? map.queryRenderedFeatures(bbox, { layers: POI_LAYERS })
         : [];
 
-      // Only proceed if we actually tapped a named POI
       if (!features.length) return;
 
-      const f = features[0];
+      const f       = features[0];
       const poiName = f.properties.name || f.properties.name_en;
       if (!poiName) return;
 
-      // Guest — show join prompt with store context
+      // Guest — show join prompt
       if (!currentUser) {
         showToast(`Join Snagli to report ${poiName}! 🎯`);
         setTimeout(() => openAuth(), 800);
@@ -930,9 +943,9 @@ function initMap() {
           `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json` +
           `?types=poi,address&access_token=${MAPBOX_TOKEN}&limit=1`
         );
-        const data = await res.json();
-        const best = data.features?.[0];
-        const name    = poiName || best?.text || best?.place_name?.split(',')[0] || 'This location';
+        const data    = await res.json();
+        const best    = data.features?.[0];
+        const name    = poiName || best?.text || 'This location';
         const address = best?.place_name || '';
         startPinFromMap(name, address, lat, lng);
       } catch {
@@ -956,25 +969,30 @@ async function loadUser(user) {
 }
 
 function updateAuthUI() {
-  const btn = document.getElementById('auth-btn');
+  const btn    = document.getElementById('auth-btn');
   const addBtn = document.getElementById('add-btn');
-  const adminBtn = document.getElementById('admin-nav-btn');
   if (currentUser) {
     const username = currentProfile?.public_username || '?';
-    const initial = username.charAt(0).toUpperCase();
-    btn.className = 'logged-in';
-    btn.innerHTML = `<div class="avatar-circle">${initial}</div><span>${username}</span>`;
-    btn.onclick = () => { loadProfileStats(); openOverlay('profile-overlay'); };
+    const initial  = username.charAt(0).toUpperCase();
+    btn.className  = 'logged-in';
+    btn.innerHTML  = `<div class="avatar-circle">${initial}</div><span>${username}</span>`;
+    btn.onclick    = () => { loadProfileStats(); openOverlay('profile-overlay'); };
     addBtn.classList.remove('guest');
-    document.getElementById('profile-name').textContent = currentProfile?.display_name || username;
-    document.getElementById('profile-username').textContent = '@' + username;
-    if (currentProfile?.is_admin) adminBtn.style.display = 'flex';
+
+    // Profile sheet
+    document.getElementById('profile-name').textContent     = currentProfile?.display_name || username;
+    document.getElementById('profile-username').textContent  = '@' + username;
+    document.getElementById('profile-avatar-big').textContent = initial;
+
+    // Show admin button inside profile if admin
+    const adminBtn = document.getElementById('profile-admin-btn');
+    if (adminBtn) adminBtn.style.display = currentProfile?.is_admin ? 'block' : 'none';
+
   } else {
     btn.className = '';
     btn.innerHTML = 'Join';
-    btn.onclick = openAuth;
+    btn.onclick   = openAuth;
     addBtn.classList.add('guest');
-    adminBtn.style.display = 'none';
   }
 }
 
@@ -1375,28 +1393,31 @@ async function searchStores(q) {
 
 async function geocodeStore(q) {
   const container = document.getElementById('store-results');
-  container.innerHTML = `<div class="store-result" style="color:var(--muted);font-style:italic">Searching…</div>`;
+  container.innerHTML = `<div class="store-result" style="color:var(--muted);font-style:italic">Searching nearby…</div>`;
   container.style.display = 'block';
 
   try {
-    // Use current map center for proximity, fall back to user's last known location
     const center = map.getCenter();
-    const proximity = `${center.lng},${center.lat}`;
+    const lat = center.lat;
+    const lng = center.lng;
 
-    // Search as POI first (catches named businesses like Target, Five Below)
-    // Also include address for cases where user types a full address
+    // Build a tight ~25 mile bounding box around map center
+    const delta = 0.4; // ~25 miles
+    const bbox = `${lng - delta},${lat - delta},${lng + delta},${lat + delta}`;
+
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json` +
-      `?proximity=${proximity}` +
+      `?proximity=${lng},${lat}` +
+      `&bbox=${bbox}` +
       `&types=poi,address` +
       `&country=us` +
-      `&limit=6` +
+      `&limit=5` +
       `&access_token=${MAPBOX_TOKEN}`;
 
     const res  = await fetch(url);
     const data = await res.json();
 
     if (!data.features || data.features.length === 0) {
-      container.innerHTML = `<div class="store-result" style="color:var(--muted)">No results — try a different name or address</div>`;
+      container.innerHTML = `<div class="store-result" style="color:var(--muted)">No nearby results — try a different name, or tap the store on the map</div>`;
       return;
     }
 
@@ -1453,31 +1474,47 @@ async function submitPin() {
   const btn = document.getElementById('submit-pin-btn');
   btn.disabled = true; btn.textContent = 'Dropping pin… 📍';
 
-  const now = new Date().toISOString();
-  const { error } = await sb.from('pins').insert({
-    user_id:       currentUser.id,
-    item_id:       pinState.item,
-    store_name:    pinState.store.name,
-    store_address: pinState.store.address,
-    latitude:      pinState.store.lat,
-    longitude:     pinState.store.lng,
-    status:        pinState.status,
-    quantity:      pinState.qty,
-    health_tier:   3,
-    confirm_count: 0,
-    removed:       false,
-    last_activity: now,
-    created_at:    now,
-  });
+  // Safety timeout — always re-enable button after 8s no matter what
+  const safetyTimer = setTimeout(() => {
+    btn.disabled = false; btn.textContent = 'Drop the Pin 📍';
+    showToast('Taking longer than expected — try again');
+  }, 8000);
 
-  btn.disabled = false; btn.textContent = 'Drop the Pin 📍';
+  try {
+    const now = new Date().toISOString();
+    const { error } = await sb.from('pins').insert({
+      user_id:       currentUser.id,
+      item_id:       pinState.item,
+      store_name:    pinState.store.name,
+      store_address: pinState.store.address,
+      latitude:      pinState.store.lat,
+      longitude:     pinState.store.lng,
+      status:        pinState.status,
+      quantity:      pinState.qty,
+      health_tier:   3,
+      confirm_count: 0,
+      removed:       false,
+      last_activity: now,
+      created_at:    now,
+    });
 
-  if (error) { showToast('Something went wrong. Try again!'); return; }
+    clearTimeout(safetyTimer);
+    btn.disabled = false; btn.textContent = 'Drop the Pin 📍';
 
-  closeOverlay('pin-overlay');
-  showToast('Pin dropped! Your crew can see it now 🎉');
-  map.flyTo({ center: [pinState.store.lng, pinState.store.lat], zoom: 14, duration: 1000 });
-  await loadPins();
+    if (error) {
+      showToast('Something went wrong: ' + error.message);
+      return;
+    }
+
+    closeOverlay('pin-overlay');
+    showToast('Pin dropped! Your crew can see it now 🎉');
+    map.flyTo({ center: [pinState.store.lng, pinState.store.lat], zoom: 14, duration: 1000 });
+    loadPins(); // no await — don't block UI on reload
+  } catch(e) {
+    clearTimeout(safetyTimer);
+    btn.disabled = false; btn.textContent = 'Drop the Pin 📍';
+    showToast('Network error — check your connection and try again');
+  }
 }
 
 // share card text helper
