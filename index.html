@@ -760,7 +760,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.1.9</div>
+<div id="version-tag">v0.2.0</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -860,37 +860,68 @@ function initMap() {
   });
   map.addControl(geolocate, 'bottom-right');
 
-  // Auto-geolocate as soon as map is ready — this is the primary center
+  // When geolocate fires, override the zoom to a sensible neighborhood level
+  geolocate.on('geolocate', (e) => {
+    map.flyTo({
+      center: [e.coords.longitude, e.coords.latitude],
+      zoom: 12,
+      duration: 1200
+    });
+  });
+
   map.on('load', () => {
-    // Trigger geolocate — shows blue user dot and flies to location
     geolocate.trigger();
 
     // Fallback if geolocation denied after 6s
     setTimeout(() => {
       if (map.getZoom() < 8) {
-        map.flyTo({ center: [-83.1498, 42.6584], zoom: 11, duration: 800 });
+        map.flyTo({ center: [-83.1498, 42.6584], zoom: 12, duration: 800 });
       }
     }, 6000);
 
-    // Tap a store/POI on the map to start adding a pin there
+    // Tap anywhere on the map to start a pin
+    // First tries to find a named POI at the tap point
+    // Falls back to reverse geocoding the coordinates
     map.on('click', async (e) => {
       if (!currentUser) return;
-      const features = map.queryRenderedFeatures(e.point, { layers: ['poi-label','transit-label'] });
-      if (!features.length) return;
-      const f = features[0];
-      const name = f.properties.name || f.properties.name_en;
-      if (!name) return;
+
+      // Check for any named place across all label layers
+      const POI_LAYERS = [
+        'poi-label', 'transit-label', 'airport-label',
+        'settlement-label', 'natural-point-label'
+      ].filter(l => {
+        try { return !!map.getLayer(l); } catch { return false; }
+      });
+
+      const features = POI_LAYERS.length
+        ? map.queryRenderedFeatures(e.point, { layers: POI_LAYERS })
+        : [];
+
       const { lng, lat } = e.lngLat;
+
+      // Get the best name from POI features
+      const poiName = features.length
+        ? (features[0].properties.name || features[0].properties.name_en)
+        : null;
+
+      // Always reverse geocode to get a real address
       try {
-        const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?types=address&access_token=${MAPBOX_TOKEN}`);
+        const res = await fetch(
+          `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json` +
+          `?types=poi,address&access_token=${MAPBOX_TOKEN}&limit=1`
+        );
         const data = await res.json();
-        const address = data.features?.[0]?.place_name || '';
+        const best = data.features?.[0];
+        const name    = poiName || best?.text || best?.place_name?.split(',')[0] || 'This location';
+        const address = best?.place_name || '';
         startPinFromMap(name, address, lat, lng);
       } catch {
+        const name = poiName || 'This location';
         startPinFromMap(name, '', lat, lng);
       }
     });
 
+    // Pointer cursor when hovering store labels
     map.on('mouseenter', 'poi-label', () => { map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'poi-label', () => { map.getCanvas().style.cursor = ''; });
   });
@@ -1230,19 +1261,21 @@ function resetPinState() {
   pinNextStep(0);
 }
 
-// Called when user taps a POI or store on the map
+// Called when user taps a location on the map
 function startPinFromMap(storeName, storeAddress, lat, lng) {
   if (!currentUser) { openAuth(); return; }
+
+  // Don't open pin flow if the add pin sheet is already open
+  if (document.getElementById('pin-overlay').classList.contains('open')) return;
+
   resetPinState();
-  // Pre-fill the store
   pinState.store = { name: storeName, address: storeAddress, lat, lng };
   document.getElementById('sel-store-name').textContent = storeName;
   document.getElementById('sel-store-addr').textContent = storeAddress;
   document.getElementById('selected-store').style.display = 'block';
   document.getElementById('step1-next').disabled = false;
   openOverlay('pin-overlay');
-  // Skip straight to item selection since store is pre-filled
-  pinNextStep(0);
+  pinNextStep(0); // Start at item selection — store is pre-filled
 }
 
 function pinNextStep(step) {
