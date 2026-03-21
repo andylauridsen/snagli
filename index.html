@@ -776,7 +776,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.2.1</div>
+<div id="version-tag">v0.2.2</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -794,6 +794,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 let map, currentUser, currentProfile, markers = {}, activeFilters = new Set(['all']);
 let pinState = { step: 0, store: null, item: null, status: null, qty: null };
 let storeSearchTimer = null;
+let storeFeatureCache = [];
 
 // Default items (used if DB not seeded yet)
 const DEFAULT_ITEMS = [
@@ -1363,64 +1364,88 @@ function checkSubmitReady() {
   document.getElementById('submit-pin-btn').disabled = !pinState.status;
 }
 
-// Store search (mock for now — Mapbox Geocoding used as fallback)
+// ── Store Search ──────────────────────────────────────────
+
 async function searchStores(q) {
   if (storeSearchTimer) clearTimeout(storeSearchTimer);
-  if (q.length < 2) { document.getElementById('store-results').style.display = 'none'; return; }
-  storeSearchTimer = setTimeout(() => geocodeStore(q), 400);
+  const container = document.getElementById('store-results');
+  if (q.length < 2) { container.style.display = 'none'; return; }
+  storeSearchTimer = setTimeout(() => geocodeStore(q), 350);
 }
 
 async function geocodeStore(q) {
-  if (!mapboxgl.accessToken || mapboxgl.accessToken === 'MAPBOX_TOKEN_PLACEHOLDER') {
-    // Fallback: show sample stores for demo
-    showMockStores(q);
-    return;
-  }
+  const container = document.getElementById('store-results');
+  container.innerHTML = `<div class="store-result" style="color:var(--muted);font-style:italic">Searching…</div>`;
+  container.style.display = 'block';
+
   try {
+    // Use current map center for proximity, fall back to user's last known location
     const center = map.getCenter();
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?proximity=${center.lng},${center.lat}&types=poi&access_token=${mapboxgl.accessToken}&limit=4`;
+    const proximity = `${center.lng},${center.lat}`;
+
+    // Search as POI first (catches named businesses like Target, Five Below)
+    // Also include address for cases where user types a full address
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json` +
+      `?proximity=${proximity}` +
+      `&types=poi,address` +
+      `&country=us` +
+      `&limit=6` +
+      `&access_token=${MAPBOX_TOKEN}`;
+
     const res  = await fetch(url);
     const data = await res.json();
-    showStoreResults(data.features || []);
-  } catch(e) { showMockStores(q); }
-}
 
-function showMockStores(q) {
-  const mocks = [
-    { text: 'Target', place_name: '1234 Main St, Chicago, IL', geometry: { coordinates: [-87.63, 41.88] } },
-    { text: 'GameStop', place_name: '567 Oak Ave, Chicago, IL', geometry: { coordinates: [-87.64, 41.87] } },
-    { text: 'Five Below', place_name: '890 State St, Chicago, IL', geometry: { coordinates: [-87.625, 41.879] } },
-  ].filter(s => s.text.toLowerCase().includes(q.toLowerCase()));
-  showStoreResults(mocks);
+    if (!data.features || data.features.length === 0) {
+      container.innerHTML = `<div class="store-result" style="color:var(--muted)">No results — try a different name or address</div>`;
+      return;
+    }
+
+    storeFeatureCache = data.features;
+    showStoreResults(data.features);
+  } catch(e) {
+    container.innerHTML = `<div class="store-result" style="color:var(--muted)">Search unavailable — try tapping the store on the map instead</div>`;
+  }
 }
 
 function showStoreResults(features) {
   const container = document.getElementById('store-results');
   if (!features.length) { container.style.display = 'none'; return; }
-  container.innerHTML = features.map((f,i) => `
-    <div class="store-result" onclick="selectStore(${i})">
-      <div class="store-name">${f.text || f.place_name}</div>
-      <div class="store-addr">${f.place_name || ''}</div>
-    </div>
-  `).join('');
+
+  container.innerHTML = features.map((f, i) => {
+    // Extract clean name and address parts
+    const name    = f.text || f.place_name.split(',')[0];
+    const context = f.place_name || '';
+    // Show address minus the POI name itself for cleaner display
+    const addr    = context.startsWith(name)
+      ? context.slice(name.length).replace(/^,\s*/, '')
+      : context;
+
+    return `<div class="store-result" onclick="selectStore(${i})">
+      <div class="store-name">${name}</div>
+      ${addr ? `<div class="store-addr">${addr}</div>` : ''}
+    </div>`;
+  }).join('');
+
   container.style.display = 'block';
-  container._features = features;
 }
 
 function selectStore(i) {
-  const f = document.getElementById('store-results')._features[i];
+  const f = storeFeatureCache[i];
+  if (!f) return;
+
   pinState.store = {
-    name: f.text || f.place_name.split(',')[0],
+    name:    f.text || f.place_name.split(',')[0],
     address: f.place_name || '',
-    lat: f.geometry.coordinates[1],
-    lng: f.geometry.coordinates[0]
+    lat:     f.geometry.coordinates[1],
+    lng:     f.geometry.coordinates[0]
   };
+
   document.getElementById('sel-store-name').textContent = pinState.store.name;
   document.getElementById('sel-store-addr').textContent = pinState.store.address;
   document.getElementById('selected-store').style.display = 'block';
   document.getElementById('store-results').style.display = 'none';
-  document.getElementById('store-search').value = pinState.store.name;
-  document.getElementById('step0-next').disabled = false;
+  document.getElementById('store-search').value = '';
+  document.getElementById('step1-next').disabled = false;
 }
 
 async function submitPin() {
