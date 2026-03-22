@@ -217,9 +217,18 @@
       padding: 20px 20px 40px;
       transform: translateY(100%);
       transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-      max-height: 92dvh; overflow-y: auto;
+      max-height: 88dvh; overflow-y: auto;
+      /* Prevent overscroll from pushing sheet off screen */
+      overscroll-behavior: contain;
     }
     .overlay.open .sheet { transform: translateY(0); }
+
+    /* Store search step gets special treatment — search bar stays visible */
+    #pin-step-1 .search-sticky {
+      position: sticky; top: -20px; background: var(--surface);
+      padding-top: 4px; padding-bottom: 8px; z-index: 10;
+      margin: 0 -20px; padding-left: 20px; padding-right: 20px;
+    }
 
     .sheet-handle {
       width: 40px; height: 4px; border-radius: 2px;
@@ -307,25 +316,30 @@
     }
 
     /* Status tag buttons */
-    .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+    .status-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px; }
     .status-btn {
       border: 2px solid var(--border); border-radius: var(--radius-sm);
-      padding: 10px 8px; text-align: center; cursor: pointer;
+      padding: 12px 6px; text-align: center; cursor: pointer;
       transition: all 0.15s; background: var(--surface);
       font-family: var(--font); font-size: 12px; font-weight: 700; color: var(--mid);
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
     }
     .status-btn:active { transform: scale(0.95); }
     .status-btn.selected { border-color: var(--accent2); background: #e8fff7; color: #0a7a52; }
-    .status-btn .status-emoji { font-size: 18px; display: block; margin-bottom: 3px; }
+    .status-btn .status-emoji { font-size: 20px; display: block; }
+    .status-hint { font-size: 10px; font-weight: 600; color: var(--muted); line-height: 1.2; }
+    .status-btn.selected .status-hint { color: #0a7a52; }
 
     /* Qty buttons */
-    .qty-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px; }
+    .qty-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 20px; }
     .qty-btn {
       border: 2px solid var(--border); border-radius: var(--radius-sm);
-      padding: 8px; text-align: center; cursor: pointer;
+      padding: 10px 4px; text-align: center; cursor: pointer;
       transition: all 0.15s; background: var(--surface);
-      font-family: var(--font); font-size: 12px; font-weight: 700; color: var(--mid);
+      font-family: var(--font); color: var(--mid);
+      display: flex; flex-direction: column; align-items: center;
     }
+    .qty-btn:active { transform: scale(0.95); }
     .qty-btn.selected { border-color: var(--accent); background: #fffbea; color: #7a6000; }
 
     /* Store search */
@@ -651,10 +665,13 @@
     <!-- Step 1: Where? -->
     <div id="pin-step-1" style="display:none">
       <div class="sheet-title">Where'd you find it? 📍</div>
-      <div class="sheet-sub">Search the store name and pick your location.</div>
-      <div id="store-search-wrap">
-        <span id="store-search-icon">🔍</span>
-        <input type="text" id="store-search" placeholder="e.g. Target Rochester Hills…" oninput="searchStores(this.value)" autocomplete="off" />
+      <div class="sheet-sub" style="margin-bottom:12px">Search by store name — results update as you type.</div>
+      <!-- Sticky search bar — stays visible while results scroll -->
+      <div class="search-sticky">
+        <div id="store-search-wrap">
+          <span id="store-search-icon">🔍</span>
+          <input type="text" id="store-search" placeholder="Target, Five Below, Funky Monkey…" oninput="searchStores(this.value)" autocomplete="off" />
+        </div>
       </div>
       <div id="store-results"></div>
       <div id="selected-store">
@@ -670,26 +687,52 @@
     <div id="pin-step-2" style="display:none">
       <div class="sheet-title">How's the stock? 📦</div>
       <div class="sheet-sub">Help your crew know what to expect.</div>
-      <!-- Summary of selections -->
-      <div id="pin-summary" style="display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:16px">
+
+      <!-- Summary card -->
+      <div id="pin-summary" style="display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:20px">
         <div id="pin-summary-emoji" style="font-size:24px"></div>
         <div>
           <div id="pin-summary-item" style="font-weight:800;font-size:13px;color:var(--dark)"></div>
           <div id="pin-summary-store" style="font-size:12px;color:var(--muted)"></div>
         </div>
       </div>
-      <div class="status-grid">
-        <button class="status-btn" data-status="in_stock" onclick="selectStatus(this)"><span class="status-emoji">✅</span>In Stock</button>
-        <button class="status-btn" data-status="limited" onclick="selectStatus(this)"><span class="status-emoji">📦</span>Limited</button>
-        <button class="status-btn" data-status="saw_it" onclick="selectStatus(this)"><span class="status-emoji">👀</span>Saw It</button>
-        <button class="status-btn" data-status="not_sure" onclick="selectStatus(this)"><span class="status-emoji">❓</span>Not Sure</button>
+
+      <!-- Status: found vs spotted -->
+      <div style="font-size:11px;font-weight:800;color:var(--mid);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Did you find it?</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px">
+        <button class="status-btn" data-status="in_stock" onclick="selectStatus(this)">
+          <span class="status-emoji">✅</span>
+          <span>Found It!</span>
+          <span class="status-hint">Confirmed in stock</span>
+        </button>
+        <button class="status-btn" data-status="saw_it" onclick="selectStatus(this)">
+          <span class="status-emoji">👀</span>
+          <span>Spotted</span>
+          <span class="status-hint">Saw it, didn't check</span>
+        </button>
       </div>
-      <div style="font-size:12px;font-weight:800;color:var(--mid);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Quantity (optional)</div>
-      <div class="qty-grid">
-        <button class="qty-btn" data-qty="few" onclick="selectQty(this)">A Few</button>
-        <button class="qty-btn" data-qty="some" onclick="selectQty(this)">Some</button>
-        <button class="qty-btn" data-qty="tons" onclick="selectQty(this)">Tons! 🎉</button>
+
+      <!-- Quantity -->
+      <div style="font-size:11px;font-weight:800;color:var(--mid);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">How much is there?</div>
+      <div class="qty-grid" style="grid-template-columns:repeat(4,1fr)">
+        <button class="qty-btn" data-qty="tons" onclick="selectQty(this)">
+          <div style="font-size:22px">🔥</div>
+          <div style="font-size:11px;font-weight:800;margin-top:3px">Tons!</div>
+        </button>
+        <button class="qty-btn" data-qty="some" onclick="selectQty(this)">
+          <div style="font-size:22px">😊</div>
+          <div style="font-size:11px;font-weight:800;margin-top:3px">Some</div>
+        </button>
+        <button class="qty-btn" data-qty="few" onclick="selectQty(this)">
+          <div style="font-size:22px">😬</div>
+          <div style="font-size:11px;font-weight:800;margin-top:3px">A Few</div>
+        </button>
+        <button class="qty-btn" data-qty="last" onclick="selectQty(this)">
+          <div style="font-size:22px">🚨</div>
+          <div style="font-size:11px;font-weight:800;margin-top:3px">Last One!</div>
+        </button>
       </div>
+
       <button class="btn-primary" onclick="submitPin()" id="submit-pin-btn" disabled>Drop the Pin 📍</button>
       <button class="btn-ghost" onclick="pinNextStep(1)">← Back</button>
     </div>
@@ -790,7 +833,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.2.5</div>
+<div id="version-tag">v0.2.7</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -827,10 +870,17 @@ let ITEMS = [...DEFAULT_ITEMS];
 
 // Status labels
 const STATUS_LABELS = {
-  in_stock: '✅ In Stock',
-  limited:  '📦 Limited',
-  saw_it:   '👀 Saw It',
-  not_sure: '❓ Not Sure'
+  in_stock: '✅ Found It!',
+  saw_it:   '👀 Spotted',
+  limited:  '⚠️ Running Low', // legacy
+  not_sure: '❓ Not Sure'     // legacy
+};
+
+const QTY_LABELS = {
+  tons: '🔥 Tons!',
+  some: '😊 Some',
+  few:  '😬 A Few',
+  last: '🚨 Last One!'
 };
 
 // ── Boot ─────────────────────────────────────────────────
@@ -1223,7 +1273,7 @@ function buildPopupHTML(pin, item) {
       </div>
     </div>
     <div class="pp-store">${pin.store_name}</div>
-    <div class="pp-status">${STATUS_LABELS[pin.status] || pin.status}${pin.quantity ? ' · ' + pin.quantity : ''}</div>
+    <div class="pp-status">${STATUS_LABELS[pin.status] || pin.status}${pin.quantity ? ' · ' + (QTY_LABELS[pin.quantity] || pin.quantity) : ''}</div>
     <div class="pp-meta">@${username} · ${age}<br>${confirms} confirm${confirms !== 1 ? 's' : ''}</div>
     <div class="pp-health">${dots}</div>
     <div class="pp-actions">
@@ -1520,9 +1570,12 @@ async function retrieveStore(i) {
     const coords = feat.geometry.coordinates; // [lng, lat]
     const props  = feat.properties;
 
+    // Always use the suggestion's display name (what user saw + chose)
+    // The retrieved feature can return sub-locations like "Kroger Floral" or "Kroger Deli"
+    // which is not what the user selected — suggestion.name is always the right name
     pinState.store = {
-      name:    props.name || suggestion.name,
-      address: props.full_address || suggestion.full_address || '',
+      name:    suggestion.name,
+      address: props.full_address || suggestion.full_address || suggestion.place_formatted || '',
       lat:     coords[1],
       lng:     coords[0]
     };
