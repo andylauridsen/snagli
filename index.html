@@ -790,7 +790,7 @@
 </div>
 
 <!-- Version tag -->
-<div id="version-tag">v0.2.3</div>
+<div id="version-tag">v0.2.5</div>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -808,7 +808,6 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 let map, currentUser, currentProfile, markers = {}, activeFilters = new Set(['all']);
 let pinState = { step: 0, store: null, item: null, status: null, qty: null };
 let storeSearchTimer = null;
-let storeFeatureCache = [];
 
 // Default items (used if DB not seeded yet)
 const DEFAULT_ITEMS = [
@@ -1382,92 +1381,177 @@ function checkSubmitReady() {
   document.getElementById('submit-pin-btn').disabled = !pinState.status;
 }
 
-// ── Store Search ──────────────────────────────────────────
+// ── Store Search (Mapbox Search Box API) ──────────────────
+// Two-step: suggest → retrieve (gets real business names + coordinates)
+let storeFeatureCache = [];
+let searchSessionToken = null;
+
+function newSessionToken() {
+  // UUID v4 — required by Mapbox Search Box API per session
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
 
 async function searchStores(q) {
   if (storeSearchTimer) clearTimeout(storeSearchTimer);
   const container = document.getElementById('store-results');
   if (q.length < 2) { container.style.display = 'none'; return; }
-  storeSearchTimer = setTimeout(() => geocodeStore(q), 350);
+  if (!searchSessionToken) searchSessionToken = newSessionToken();
+  // 200ms debounce — fast enough to feel live
+  storeSearchTimer = setTimeout(() => suggestStores(q), 200);
 }
 
-async function geocodeStore(q) {
+async function suggestStores(q) {
   const container = document.getElementById('store-results');
-  container.innerHTML = `<div class="store-result" style="color:var(--muted);font-style:italic">Searching nearby…</div>`;
+  container.innerHTML = `<div class="store-result" style="color:var(--muted);font-style:italic;font-size:13px;padding:12px 14px">Searching nearby…</div>`;
   container.style.display = 'block';
 
   try {
     const center = map.getCenter();
-    const lat = center.lat;
-    const lng = center.lng;
 
-    // Build a tight ~25 mile bounding box around map center
-    const delta = 0.4; // ~25 miles
-    const bbox = `${lng - delta},${lat - delta},${lng + delta},${lat + delta}`;
+    // Broad retail POI categories — anything that might carry collectibles,
+    // toys, games, sneakers, gadgets, or trending items
+    const categories = [
+      'retail', 'shopping', 'shopping_mall', 'department_store',
+      'convenience', 'big_box_retail', 'toy_store', 'game_store',
+      'hobby_store', 'sporting_goods', 'shoe_store', 'clothing_store',
+      'electronics', 'bookstore', 'gift_shop', 'dollar_store',
+      'drugstore', 'pharmacy', 'grocery', 'supermarket',
+      'general_merchandise', 'variety_store', 'discount_store'
+    ].join(',');
 
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json` +
-      `?proximity=${lng},${lat}` +
-      `&bbox=${bbox}` +
-      `&types=poi,address` +
+    const url = `https://api.mapbox.com/search/searchbox/v1/suggest` +
+      `?q=${encodeURIComponent(q)}` +
+      `&proximity=${center.lng},${center.lat}` +
+      `&types=poi` +
+      `&poi_category=${categories}` +
       `&country=us` +
-      `&limit=5` +
+      `&limit=6` +
+      `&session_token=${searchSessionToken}` +
       `&access_token=${MAPBOX_TOKEN}`;
 
     const res  = await fetch(url);
     const data = await res.json();
 
-    if (!data.features || data.features.length === 0) {
-      container.innerHTML = `<div class="store-result" style="color:var(--muted)">No nearby results — try a different name, or tap the store on the map</div>`;
+    if (!data.suggestions || data.suggestions.length === 0) {
+      // Fall back to uncategorized POI search — catches smaller/niche stores
+      await suggestStoresUncategorized(q);
       return;
     }
 
-    storeFeatureCache = data.features;
-    showStoreResults(data.features);
+    storeFeatureCache = data.suggestions;
+    showStoreResults(data.suggestions);
   } catch(e) {
-    container.innerHTML = `<div class="store-result" style="color:var(--muted)">Search unavailable — try tapping the store on the map instead</div>`;
+    container.innerHTML = `<div class="store-result" style="color:var(--muted);font-size:13px;padding:12px 14px">Search unavailable — tap the store on the map instead</div>`;
   }
 }
 
-function showStoreResults(features) {
+// Fallback: search without category filter for smaller/niche stores
+async function suggestStoresUncategorized(q) {
   const container = document.getElementById('store-results');
-  if (!features.length) { container.style.display = 'none'; return; }
+  try {
+    const center = map.getCenter();
+    const url = `https://api.mapbox.com/search/searchbox/v1/suggest` +
+      `?q=${encodeURIComponent(q)}` +
+      `&proximity=${center.lng},${center.lat}` +
+      `&types=poi` +
+      `&country=us` +
+      `&limit=6` +
+      `&session_token=${searchSessionToken}` +
+      `&access_token=${MAPBOX_TOKEN}`;
 
-  container.innerHTML = features.map((f, i) => {
-    // Extract clean name and address parts
-    const name    = f.text || f.place_name.split(',')[0];
-    const context = f.place_name || '';
-    // Show address minus the POI name itself for cleaner display
-    const addr    = context.startsWith(name)
-      ? context.slice(name.length).replace(/^,\s*/, '')
-      : context;
+    const res  = await fetch(url);
+    const data = await res.json();
 
-    return `<div class="store-result" onclick="selectStore(${i})">
+    if (!data.suggestions || data.suggestions.length === 0) {
+      container.innerHTML = `<div class="store-result" style="color:var(--muted);font-size:13px;padding:12px 14px">No nearby stores found — try tapping the store on the map</div>`;
+      return;
+    }
+
+    storeFeatureCache = data.suggestions;
+    showStoreResults(data.suggestions);
+  } catch(e) {
+    container.innerHTML = `<div class="store-result" style="color:var(--muted);font-size:13px;padding:12px 14px">Search unavailable — tap the store on the map instead</div>`;
+  }
+}
+
+function showStoreResults(suggestions) {
+  const container = document.getElementById('store-results');
+  container.innerHTML = suggestions.map((s, i) => {
+    const name    = s.name || s.full_address?.split(',')[0] || 'Unknown';
+    const address = s.full_address || s.place_formatted || '';
+    // Strip store name from address for cleaner display
+    const addr    = address.startsWith(name)
+      ? address.slice(name.length).replace(/^[,\s]+/, '')
+      : address;
+    return `<div class="store-result" onclick="retrieveStore(${i})">
       <div class="store-name">${name}</div>
       ${addr ? `<div class="store-addr">${addr}</div>` : ''}
     </div>`;
   }).join('');
-
   container.style.display = 'block';
 }
 
-function selectStore(i) {
-  const f = storeFeatureCache[i];
-  if (!f) return;
+async function retrieveStore(i) {
+  const suggestion = storeFeatureCache[i];
+  if (!suggestion) return;
 
-  pinState.store = {
-    name:    f.text || f.place_name.split(',')[0],
-    address: f.place_name || '',
-    lat:     f.geometry.coordinates[1],
-    lng:     f.geometry.coordinates[0]
-  };
-
-  document.getElementById('sel-store-name').textContent = pinState.store.name;
-  document.getElementById('sel-store-addr').textContent = pinState.store.address;
+  // Show loading state in selected-store while we retrieve coordinates
+  document.getElementById('sel-store-name').textContent = suggestion.name || 'Loading…';
+  document.getElementById('sel-store-addr').textContent = 'Getting location…';
   document.getElementById('selected-store').style.display = 'block';
   document.getElementById('store-results').style.display = 'none';
   document.getElementById('store-search').value = '';
-  document.getElementById('step1-next').disabled = false;
+
+  try {
+    // Step 2: retrieve full details + coordinates using mapbox_id
+    const url = `https://api.mapbox.com/search/searchbox/v1/retrieve/${suggestion.mapbox_id}` +
+      `?session_token=${searchSessionToken}` +
+      `&access_token=${MAPBOX_TOKEN}`;
+
+    const res  = await fetch(url);
+    const data = await res.json();
+    const feat = data.features?.[0];
+
+    if (!feat) throw new Error('No feature returned');
+
+    const coords = feat.geometry.coordinates; // [lng, lat]
+    const props  = feat.properties;
+
+    pinState.store = {
+      name:    props.name || suggestion.name,
+      address: props.full_address || suggestion.full_address || '',
+      lat:     coords[1],
+      lng:     coords[0]
+    };
+
+    document.getElementById('sel-store-name').textContent = pinState.store.name;
+    document.getElementById('sel-store-addr').textContent = pinState.store.address;
+    document.getElementById('step1-next').disabled = false;
+
+    // Reset session token for next search
+    searchSessionToken = null;
+
+  } catch(e) {
+    // Fallback: use suggestion data without precise coordinates
+    // Approximate from map center — user can still submit
+    const center = map.getCenter();
+    pinState.store = {
+      name:    suggestion.name || 'Unknown Store',
+      address: suggestion.full_address || suggestion.place_formatted || '',
+      lat:     center.lat,
+      lng:     center.lng
+    };
+    document.getElementById('sel-store-name').textContent = pinState.store.name;
+    document.getElementById('sel-store-addr').textContent = pinState.store.address + ' (approximate location)';
+    document.getElementById('step1-next').disabled = false;
+    searchSessionToken = null;
+  }
 }
+
+function selectStore(i) { retrieveStore(i); } // alias for backward compat
 
 async function submitPin() {
   if (!pinState.store || !pinState.item || !pinState.status) return;
